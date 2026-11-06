@@ -663,7 +663,7 @@ impl Evaluator {
     /// Evaluate a local pkl file and convert its output value to JSON, as
     /// `pkl eval -f json` renders it (but keeping null properties).
     #[cfg(feature = "native-io")]
-    pub(crate) fn eval_file_json_blocking(&mut self, path: &Path) -> Result<serde_json::Value> {
+    pub fn eval_file_json_blocking(&mut self, path: &Path) -> Result<serde_json::Value> {
         let module = self.eval_file(path)?;
         self.module_json(module)
     }

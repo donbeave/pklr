@@ -74,7 +74,14 @@ fn resource_hooks_are_distinct_from_module_imports()
         &root,
         "import \"module.pkl\" as other\nvalue = other.value\n",
     )?;
-    assert_eq!(evaluator.eval_file(&root)?.to_json()["value"], 42);
+    assert_eq!(evaluator.eval_file_json_blocking(&root)?["value"], 42);
+    std::fs::write(&root, "output { value = 7 }\n")?;
+    let mut output_evaluator = Evaluator::with_capabilities(ResourceDenied {
+        native: NativeCapabilities::new(),
+        denied: "existence",
+    });
+    output_evaluator.set_base_path(&dir);
+    assert_eq!(output_evaluator.eval_file_json_blocking(&root)?, 7);
     std::fs::write(dir.join("input.txt"), "synthetic")?;
     for (source, denied, expected) in [
         (
