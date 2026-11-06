@@ -113,3 +113,30 @@ fn resource_hooks_are_distinct_from_module_imports()
     std::fs::remove_dir_all(dir)?;
     Ok(())
 }
+
+#[test]
+fn resource_glob_can_use_capability_backed_directory_entries() -> Result<()> {
+    struct MemoryGlob;
+    impl pklr::eval::GlobAccess for MemoryGlob {
+        fn is_file(&mut self, path: &Path) -> Result<bool> {
+            Ok(path == Path::new("virtual/a.txt"))
+        }
+        fn list_dir(&mut self, path: &Path) -> Result<Vec<(String, bool)>> {
+            Ok(if path == Path::new("virtual") {
+                vec![("a.txt".into(), false), ("dir".into(), true)]
+            } else if path == Path::new("virtual/dir") {
+                vec![("b.txt".into(), false)]
+            } else {
+                Vec::new()
+            })
+        }
+    }
+    assert_eq!(
+        pklr::eval::expand_glob_with(Path::new("virtual"), "**/*.txt", &mut MemoryGlob)?,
+        [
+            PathBuf::from("virtual/a.txt"),
+            PathBuf::from("virtual/dir/b.txt")
+        ]
+    );
+    Ok(())
+}

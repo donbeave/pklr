@@ -21,30 +21,53 @@ const MAX_LIST_ELEMENTS: usize = 16384;
 /// the current directory. Matches are files, in pkl's order: within a
 /// directory, files before subdirectories, each sorted by name. Symbolic links
 /// are skipped, as pkl does to avoid cyclic globs.
-pub fn expand_glob(base: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
-    Ok(resolve_file_glob(module_dir(base), pattern)?
-        .into_iter()
-        .map(|(_, path)| path)
-        .collect())
+pub trait GlobAccess {
+    /// Whether a path names a file; nonexistent paths return false.
+    fn is_file(&mut self, path: &Path) -> Result<bool>;
+    /// List a directory in Pkl glob order, excluding symbolic links.
+    fn list_dir(&mut self, path: &Path) -> Result<Vec<(String, bool)>>;
 }
 
-/// Expand `pattern` against the directory `base`, returning each matched
-/// file with its key: the pattern's leading literal parts followed by the
-/// matched path under them, as pkl keys `import*` and `read*` results.
-pub(super) fn resolve_file_glob(base: &Path, pattern: &str) -> Result<Vec<(String, PathBuf)>> {
+struct NativeGlobAccess;
+impl GlobAccess for NativeGlobAccess {
+    fn is_file(&mut self, path: &Path) -> Result<bool> {
+        Ok(path.is_file())
+    }
+    fn list_dir(&mut self, path: &Path) -> Result<Vec<(String, bool)>> {
+        list_dir(path)
+    }
+}
+
+pub fn expand_glob(base: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
+    expand_glob_with(base, pattern, &mut NativeGlobAccess)
+}
+
+/// Expand a Pkl glob using host-provided filesystem operations.
+pub fn expand_glob_with(
+    base: &Path,
+    pattern: &str,
+    access: &mut dyn GlobAccess,
+) -> Result<Vec<PathBuf>> {
     let (prefix, parts) = split_glob_pattern(pattern)?;
     let mut results = Vec::new();
+    let base = module_dir(base);
     if parts.is_empty() {
         let path = base.join(pattern);
-        if path.is_file() {
+        if access.is_file(&path)? {
             results.push((pattern.to_string(), path));
         }
-        return Ok(results);
+    } else {
+        let mut listed = 0;
+        resolve_glob_parts(
+            &parts,
+            &base.join(&prefix),
+            &prefix,
+            &mut listed,
+            &mut results,
+            access,
+        )?;
     }
-    let dir = base.join(&prefix);
-    let mut listed = 0;
-    resolve_glob_parts(&parts, &dir, &prefix, &mut listed, &mut results)?;
-    Ok(results)
+    Ok(results.into_iter().map(|(_, path)| path).collect())
 }
 
 fn resolve_glob_parts(
@@ -53,48 +76,46 @@ fn resolve_glob_parts(
     key: &str,
     listed: &mut usize,
     results: &mut Vec<(String, PathBuf)>,
+    access: &mut dyn GlobAccess,
 ) -> Result<()> {
     let Some(((literal, part), rest)) = parts.split_first() else {
         return Ok(());
     };
-    // `**/` may consume no directory components, so try the remaining
-    // segments in the current directory before descending.
     if part.as_ref().is_some_and(|part| part.globstar) {
-        resolve_glob_parts(rest, dir, key, listed, results)?;
+        resolve_glob_parts(rest, dir, key, listed, results, access)?;
     }
     let Some(part) = part else {
         let path = dir.join(literal);
         let key = join_glob_key(key, literal);
         if rest.is_empty() {
-            if path.is_file() {
+            if access.is_file(&path)? {
                 results.push((key, path));
             }
             return Ok(());
         }
-        return resolve_glob_parts(rest, &path, &key, listed, results);
+        return resolve_glob_parts(rest, &path, &key, listed, results, access);
     };
     let mut matched = Vec::new();
-    expand_glob_part(part, dir, key, listed, &mut matched)?;
+    expand_glob_part(part, dir, key, listed, &mut matched, access)?;
     for (key, path, is_dir) in matched {
         if rest.is_empty() {
             if !is_dir {
                 results.push((key, path));
             }
         } else if is_dir {
-            resolve_glob_parts(rest, &path, &key, listed, results)?;
+            resolve_glob_parts(rest, &path, &key, listed, results, access)?;
         }
     }
     Ok(())
 }
 
-/// The entries of `dir` whose names match `part`, and with `**`, those of
-/// every subdirectory too.
 fn expand_glob_part(
     part: &GlobPart,
     dir: &Path,
     key: &str,
     listed: &mut usize,
     matched: &mut Vec<(String, PathBuf, bool)>,
+    access: &mut dyn GlobAccess,
 ) -> Result<()> {
     *listed += 1;
     if *listed > MAX_LIST_ELEMENTS {
@@ -103,14 +124,14 @@ fn expand_glob_part(
             "The glob pattern is too complex.",
         ));
     }
-    for (name, is_dir) in list_dir(dir)? {
+    for (name, is_dir) in access.list_dir(dir)? {
         let path = dir.join(&name);
         let entry_key = join_glob_key(key, &name);
         if part.matches(&name) {
             matched.push((entry_key.clone(), path.clone(), is_dir));
         }
         if is_dir && part.globstar {
-            expand_glob_part(part, &path, &entry_key, listed, matched)?;
+            expand_glob_part(part, &path, &entry_key, listed, matched, access)?;
         }
     }
     Ok(())
