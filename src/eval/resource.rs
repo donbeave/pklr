@@ -35,10 +35,10 @@ impl Evaluator {
                 .cloned()
                 .map(|v| Value::String(v.into()))),
             Target::File { path, uri } => {
-                if !self.path_exists_io(&path)? {
+                if !self.capabilities.resource_path_exists(&path)? {
                     return Ok(None);
                 }
-                match self.read_bytes_io(&path) {
+                match self.capabilities.resource_read_bytes(&path) {
                     Ok(bytes) => Ok(Some(resource_value(&uri, &bytes))),
                     Err(Error::Io(_, error)) if error.kind() == std::io::ErrorKind::NotFound => {
                         Ok(None)
@@ -211,7 +211,7 @@ impl Evaluator {
         let root: Option<PathBuf> = None;
         let found = resolve_triple_dot(&module, triple_dot, root.as_deref(), |candidate| {
             self.check_resource_allowed(&file_uri(&absolute_clean(candidate)))?;
-            self.path_exists_io(candidate)
+            self.capabilities.resource_path_exists(candidate)
         })?;
         Ok(found.unwrap_or_else(|| module.parent().unwrap_or(Path::new(".")).join(uri)))
     }
@@ -279,7 +279,7 @@ impl Evaluator {
                     self.check_resource_allowed(&file_uri(&absolute_clean(&base.join(pattern))))?;
                     (base, pattern.to_string(), false)
                 };
-                for path in self.glob_io(&base, &glob)? {
+                for path in self.capabilities.resource_glob(&base, &glob)? {
                     let path = absolute_clean(&self.host_absolute_path(path));
                     let uri = file_uri(&path);
                     self.check_resource_allowed(&uri)?;
@@ -292,7 +292,7 @@ impl Evaluator {
                     };
                     out.insert(
                         key.into(),
-                        resource_value(&uri, &self.read_bytes_io(&path)?),
+                        resource_value(&uri, &self.capabilities.resource_read_bytes(&path)?),
                     );
                 }
             }

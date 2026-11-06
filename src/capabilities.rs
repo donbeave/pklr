@@ -68,6 +68,21 @@ pub trait EvalCapabilities: Send + Sync {
         extract_zip_sync(bytes, destination)
     }
 
+    /// Check a file resource independently from module and package IO.
+    fn resource_path_exists(&mut self, path: &Path) -> Result<bool> {
+        self.path_exists(path)
+    }
+
+    /// Read a file resource independently from module and package IO.
+    fn resource_read_bytes(&mut self, path: &Path) -> Result<Vec<u8>> {
+        self.read_bytes(path)
+    }
+
+    /// Expand a resource glob independently from module import globs.
+    fn resource_glob(&mut self, base: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
+        self.glob(base, pattern)
+    }
+
     fn read_env(&mut self, name: &str) -> Result<Option<String>>;
 
     /// Every environment variable, used by `read*("env:...")`. Capability
