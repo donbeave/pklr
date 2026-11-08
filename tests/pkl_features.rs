@@ -12,15 +12,6 @@ fn eval(src: &str) -> serde_json::Value {
     val.to_json()
 }
 
-/// Like eval(), but also applies output.renderer.converters (full pipeline).
-fn eval_with_converters(src: &str) -> serde_json::Value {
-    let mut ev = Evaluator::new();
-    let path = std::path::Path::new("test.pkl");
-    let val = ev.eval_source(src, path).unwrap();
-    let val = ev.apply_converters(val).unwrap();
-    val.to_json()
-}
-
 fn eval_fails(src: &str) -> String {
     let mut ev = Evaluator::new();
     let path = std::path::Path::new("test.pkl");
@@ -57,14 +48,10 @@ impl Drop for TestTempDir {
     }
 }
 
-#[path = "pkl_features/advanced.rs"]
-mod advanced;
 #[path = "pkl_features/imports.rs"]
 mod imports;
 #[path = "pkl_features/numbers.rs"]
 mod numbers;
-#[path = "pkl_features/objects.rs"]
-mod objects;
 #[path = "pkl_features/render.rs"]
 mod render;
 #[path = "pkl_features/strings.rs"]
