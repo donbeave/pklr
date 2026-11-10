@@ -18,6 +18,13 @@ impl Evaluator {
     /// module's directory (see [`Self::resolve_triple_dot`]); a path that
     /// cannot be found resolves to a path that does not exist.
     pub(super) fn resolve_local_path(&mut self, current_path: &Path, uri: &str) -> Result<PathBuf> {
+        if let Some(path) = uri.strip_prefix(module_path::SCHEME) {
+            return module_path::identity(path);
+        }
+        if let Some(base) = module_path::namespace_path(current_path) {
+            let base = base.to_owned();
+            return self.resolve_module_path_relative(&base, uri);
+        }
         if let Some(triple_dot) = parse_triple_dot_path(uri)? {
             return Ok(self
                 .resolve_triple_dot(current_path, triple_dot)?
@@ -455,6 +462,20 @@ impl Evaluator {
         depth: usize,
         requested: Option<&HashSet<Name>>,
     ) -> Result<Value> {
+        // Pkl does not consider `modulepath:` globbable.
+        let module_path_pattern = match module_path::namespace_path(path) {
+            Some(base) if !uri.starts_with("file:") && !uri.contains("://") => {
+                Some(module_path::resolve_relative(base, uri)?)
+            }
+            _ if uri.starts_with(module_path::SCHEME) => Some(PathBuf::from(uri)),
+            _ => None,
+        };
+        if let Some(pattern) = module_path_pattern {
+            return Err(Error::Eval(format!(
+                "Cannot expand glob pattern `{}` because scheme `modulepath` is not globbable.",
+                pattern.display()
+            )));
+        }
         // Non-local glob imports resolve to an empty mapping.
         if uri.contains("://") {
             return Ok(Value::Object(Arc::default(), None));

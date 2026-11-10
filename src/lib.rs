@@ -93,6 +93,7 @@ pub struct EvaluatorBuilder {
     environment: Option<std::collections::BTreeMap<String, String>>,
     external_properties: std::collections::BTreeMap<String, String>,
     preloaded_packages: Vec<PreloadedPackage>,
+    module_path: Vec<eval::ModulePathEntry>,
 }
 
 /// Package content a host supplies up front instead of fetching it.
@@ -197,6 +198,34 @@ impl EvaluatorBuilder {
         self
     }
 
+    /// Append a directory to the module path that serves `modulepath:`
+    /// imports, like `pkl --module-path`. Entries are searched in order.
+    pub fn module_path_directory(mut self, directory: impl Into<std::path::PathBuf>) -> Self {
+        self.module_path
+            .push(eval::ModulePathEntry::Directory(directory.into()));
+        self
+    }
+
+    /// Append a module compiled into the host to the module path, at the
+    /// absolute namespace path `path` (imported as `modulepath:{path}`).
+    /// Entries are searched in order.
+    ///
+    /// # Panics
+    /// Panics if `path` is relative, empty or climbs above the root.
+    pub fn module_path_source(
+        mut self,
+        path: &str,
+        source: impl Into<std::sync::Arc<str>>,
+    ) -> Self {
+        let path = eval::module_path_source_path(path)
+            .unwrap_or_else(|error| panic!("invalid module path source path: {error}"));
+        self.module_path.push(eval::ModulePathEntry::Source {
+            path,
+            source: source.into(),
+        });
+        self
+    }
+
     /// Build a configured evaluator for direct source evaluation.
     ///
     /// A package that fails to preload is skipped and fetched normally.
@@ -238,6 +267,7 @@ impl EvaluatorBuilder {
             evaluator.set_environment_variables(environment);
         }
         evaluator.set_external_properties(self.external_properties);
+        evaluator.set_module_path(self.module_path);
         for package in &self.preloaded_packages {
             let _ = evaluator.preload_package(&package.url, &package.extension, &package.bytes);
         }
