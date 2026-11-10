@@ -3267,3 +3267,34 @@ fn late_binding_reaches_through_a_long_chain_of_outer_reads() {
 
     assert_eq!(eval_chain(dir.join("main.pkl"))["res"], 12);
 }
+
+#[test]
+fn imported_class_mapping_entries_take_the_declared_value_type() {
+    let temp = TestTempDir::new("pklr_test_imported_mapping_value_type");
+    std::fs::write(
+        temp.path().join("model.pkl"),
+        "class Node { fast: Listing<String>; bulk: Listing<String> }\nclass Cluster { nodes: Mapping<String, Node> }\n",
+    )
+    .unwrap();
+    let main = temp.path().join("main.pkl");
+    std::fs::write(
+        &main,
+        r#"import "model.pkl" as M
+class Node { other: Int = 7 }
+amended: M.Cluster = new { nodes { ["a"] { fast { "x" }; bulk {} } } }
+constructed: M.Cluster = new { nodes { ["b"] = new { bulk {} } } }
+mine = new Node {}
+"#,
+    )
+    .unwrap();
+    // Matches `pkl eval -f json` 0.33.0: `Node` in `Mapping<String, Node>`
+    // is model.pkl's class, even where the importer declares its own `Node`.
+    assert_eq!(
+        pklr::eval_to_json(&main).unwrap(),
+        serde_json::json!({
+            "amended": {"nodes": {"a": {"fast": ["x"], "bulk": []}}},
+            "constructed": {"nodes": {"b": {"fast": [], "bulk": []}}},
+            "mine": {"other": 7}
+        })
+    );
+}
