@@ -118,3 +118,8 @@ required-features = ["native-io"]
 # The md-5 package exposes the `md5` crate name used by the vendored source.
 [package.metadata.cargo-machete]
 ignored = ["md-5"]
+
+[[test]]
+name = "max_depth"
+path = "tests/max_depth.rs"
+required-features = ["native-io"]
