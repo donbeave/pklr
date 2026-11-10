@@ -11,6 +11,9 @@ impl Evaluator {
     }
 
     pub(super) fn module_identity_io(&mut self, path: &Path) -> Result<PathBuf> {
+        if let Some(path) = module_path::namespace_path(path) {
+            return module_path::identity(path);
+        }
         let result = match self.module_source.as_mut() {
             Some(source) => source.identity(path),
             None => return self.capabilities.canonicalize(path),
@@ -19,6 +22,9 @@ impl Evaluator {
     }
 
     pub(super) fn module_exists_io(&mut self, path: &Path) -> Result<bool> {
+        if let Some(path) = module_path::namespace_path(path) {
+            return self.module_path_exists(path);
+        }
         let result = match self.module_source.as_mut() {
             Some(source) => source.exists(path),
             None => return self.capabilities.path_exists(path),
@@ -28,6 +34,9 @@ impl Evaluator {
 
     pub(super) fn module_read_io(&mut self, path: &Path) -> Result<String> {
         self.check_cancelled()?;
+        if let Some(path) = module_path::namespace_path(path) {
+            return self.module_path_read(path);
+        }
         let result = match self.module_source.as_mut() {
             Some(source) => source.read(path),
             None => return self.capabilities.read_to_string(path),
@@ -36,6 +45,11 @@ impl Evaluator {
     }
 
     pub(super) fn module_glob_io(&mut self, base: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
+        if module_path::namespace_path(base).is_some() || pattern.starts_with(module_path::SCHEME) {
+            return Err(Error::Unsupported(
+                "glob imports are unavailable in the module path".into(),
+            ));
+        }
         if self.module_source.is_some() {
             return self.record_module_result(Err(Error::Eval(
                 "module globs are unavailable with a module source namespace".into(),
@@ -155,6 +169,7 @@ impl Evaluator {
             scoped_imports_in_flight: HashSet::default(),
             capabilities: Box::new(capabilities),
             module_source: None,
+            module_path: Vec::new(),
             module_source_failure: None,
             cancel: None,
             #[cfg(feature = "package-zip")]
