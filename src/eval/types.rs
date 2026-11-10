@@ -863,7 +863,11 @@ fn follow_type_aliases<'a>(
 }
 
 pub(super) fn is_default_type(ty: &crate::parser::TypeExpr) -> bool {
-    matches!(ty, crate::parser::TypeExpr::Named(name) if name.starts_with('*'))
+    matches!(
+        ty,
+        crate::parser::TypeExpr::Named(name) | crate::parser::TypeExpr::Constrained(name, _)
+            if name.starts_with('*')
+    )
 }
 
 /// Format a TypeExpr for user-facing error messages.
