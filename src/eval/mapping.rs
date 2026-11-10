@@ -406,6 +406,30 @@ pub(super) fn apply_mapping_type_annotation(
 
 /// The source of a mapping known only by its type: no entries to rebuild it
 /// from, just its kind.
+/// Bind the classes a `Mapping` value type names, resolved where the type is
+/// declared, into the mapping's captured scope. Its entries are evaluated
+/// later, possibly in another module that cannot resolve those names, as
+/// when an imported class declares `nodes: Mapping<String, Node>`.
+pub(super) fn capture_mapping_value_types(value: &mut Value, scope: &Scope) {
+    let Value::Object(_, Some(src)) = value else {
+        return;
+    };
+    let missing = src
+        .mapping_value_types
+        .iter()
+        .map(|name| mapping_value_type_base(name))
+        .filter(|name| src.scope().get(*name).is_none())
+        .filter_map(|name| Some((name.to_string(), resolve_dotted(scope, name)?)))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return;
+    }
+    let values = &mut Arc::make_mut(src).captured.parts_mut().values;
+    for (name, class) in missing {
+        values.insert(nm(&name), class);
+    }
+}
+
 pub(super) fn mapping_source() -> ObjectSource {
     ObjectSource {
         entries: Vec::new().into(),

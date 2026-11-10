@@ -34,6 +34,7 @@ impl Evaluator {
                 _ => self.eval_expr(expr, scope, depth)?,
             };
             apply_mapping_type_annotation(&mut value, prop.type_ann.as_ref());
+            capture_mapping_value_types(&mut value, scope);
             return Ok(Some(value));
         }
         if let Some(body) = &prop.body {
@@ -197,6 +198,7 @@ impl Evaluator {
             }
             if let Some(default) = &mut default {
                 apply_mapping_type_annotation(default, Some(ty));
+                capture_mapping_value_types(default, scope);
             }
             if require_union_default
                 && default.is_none()
