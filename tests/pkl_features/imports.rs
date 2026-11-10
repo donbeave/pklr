@@ -3288,3 +3288,45 @@ fn late_binding_reaches_through_a_long_chain_of_outer_reads() {
 
     assert_eq!(eval_chain(dir.join("main.pkl"))["res"], 12);
 }
+
+#[test]
+fn module_references_find_glob_import_expressions_everywhere() {
+    let source = r#"
+@Deprecated { message = "\(import*("annotation/*.pkl").length)" }
+x = 1
+typealias Constrained = String(import*("constraint/*.pkl").isEmpty || true)
+class C {
+  y: Int = let (all = import*("class/*.pkl")) all.length
+}
+z = "\(import*("interpolation/*.pkl").length)"
+items {
+  for (k, _ in import*("generator/*.pkl")) { k }
+  when (import*("when/*.pkl").isEmpty) { 1 } else { import*("else/*.pkl").length }
+}
+plain = import("plain.pkl")
+"#;
+    let tokens = pklr::lexer::lex(source).unwrap();
+    let module = pklr::parser::parse_named(&tokens, source, "refs.pkl").unwrap();
+    let globs = module
+        .module_references()
+        .filter(|(_, glob)| *glob)
+        .map(|(uri, _)| uri)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        globs,
+        [
+            "annotation/*.pkl",
+            "constraint/*.pkl",
+            "class/*.pkl",
+            "interpolation/*.pkl",
+            "generator/*.pkl",
+            "when/*.pkl",
+            "else/*.pkl",
+        ]
+    );
+    assert!(
+        module
+            .module_references()
+            .any(|reference| reference == ("plain.pkl", false))
+    );
+}
