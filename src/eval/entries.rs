@@ -34,7 +34,6 @@ impl Evaluator {
                 _ => self.eval_expr(expr, scope, depth)?,
             };
             apply_mapping_type_annotation(&mut value, prop.type_ann.as_ref());
-            capture_mapping_value_types(&mut value, scope);
             return Ok(Some(value));
         }
         if let Some(body) = &prop.body {
