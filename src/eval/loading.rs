@@ -18,6 +18,17 @@ impl Evaluator {
     /// module's directory (see [`Self::resolve_triple_dot`]); a path that
     /// cannot be found resolves to a path that does not exist.
     pub(super) fn resolve_local_path(&mut self, current_path: &Path, uri: &str) -> Result<PathBuf> {
+        if let Some(path) = uri.strip_prefix(module_path::SCHEME) {
+            return module_path::identity(path);
+        }
+        if let Some(base) = module_path::namespace_path(current_path) {
+            if parse_triple_dot_path(uri)?.is_some() {
+                return Err(Error::Unsupported(
+                    "triple-dot imports are unavailable in the module path".into(),
+                ));
+            }
+            return module_path::resolve_relative(base, uri);
+        }
         if let Some(triple_dot) = parse_triple_dot_path(uri)? {
             return Ok(self
                 .resolve_triple_dot(current_path, triple_dot)?

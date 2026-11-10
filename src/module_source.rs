@@ -7,6 +7,8 @@ use crate::Result;
 /// A host-provided namespace for local Pkl modules.
 ///
 /// Resource reads and package cache IO continue through `EvalCapabilities`.
+/// `modulepath:` modules never reach a module source: the evaluator's module
+/// path serves them.
 pub trait ModuleSource: Send + Sync {
     /// Return the stable identity used by module caches.
     fn identity(&mut self, path: &Path) -> Result<PathBuf>;

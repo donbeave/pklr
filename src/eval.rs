@@ -33,6 +33,9 @@ mod loading;
 mod mapping;
 mod members;
 mod module;
+mod module_path;
+#[cfg(feature = "native-io")]
+pub(crate) use module_path::{ModulePathEntry, source_path as module_path_source_path};
 mod output;
 mod package;
 mod parsers;
@@ -150,6 +153,8 @@ pub struct Evaluator {
     /// Host-provided IO for files, environment, HTTP, packages, and globs.
     capabilities: Box<dyn EvalCapabilities>,
     module_source: Option<Box<dyn crate::ModuleSource>>,
+    /// Ordered entries serving `modulepath:` modules.
+    module_path: Vec<module_path::ModulePathEntry>,
     module_source_failure: Option<String>,
     /// Set from another thread to stop the evaluation (see
     /// [`Evaluator::set_cancel_flag`]).
