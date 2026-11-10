@@ -17,6 +17,114 @@ pub struct Annotation {
 }
 
 /// A pkl module (top-level file).
+/// The URIs of every `import*(...)` expression in `entries`, in source order,
+/// including ones inside annotations, type constraints and interpolations.
+fn collect_import_glob_exprs<'a>(entries: &'a [Entry], out: &mut Vec<&'a str>) {
+    for entry in entries {
+        match entry {
+            Entry::Property(prop) => {
+                for annotation in &prop.annotations {
+                    collect_import_glob_exprs(&annotation.body, out);
+                }
+                if let Some(ty) = &prop.type_ann {
+                    collect_type_import_glob_exprs(ty, out);
+                }
+                if let Some(value) = &prop.value {
+                    collect_expr_import_glob_exprs(value, out);
+                }
+                if let Some(body) = &prop.body {
+                    collect_import_glob_exprs(body, out);
+                }
+            }
+            Entry::DynProperty(key, value) | Entry::Predicate(key, value) => {
+                collect_expr_import_glob_exprs(key, out);
+                collect_expr_import_glob_exprs(value, out);
+            }
+            Entry::ForGenerator(generator) => {
+                collect_expr_import_glob_exprs(&generator.collection, out);
+                collect_import_glob_exprs(&generator.body, out);
+            }
+            Entry::WhenGenerator(generator) => {
+                collect_expr_import_glob_exprs(&generator.condition, out);
+                collect_import_glob_exprs(&generator.body, out);
+                if let Some(body) = &generator.else_body {
+                    collect_import_glob_exprs(body, out);
+                }
+            }
+            Entry::Spread(expr) | Entry::Elem(expr) => collect_expr_import_glob_exprs(expr, out),
+            Entry::ClassDef(_, _, _, body) => collect_import_glob_exprs(body, out),
+            Entry::TypeAlias(_, ty) => collect_type_import_glob_exprs(ty, out),
+        }
+    }
+}
+
+fn collect_type_import_glob_exprs<'a>(ty: &'a TypeExpr, out: &mut Vec<&'a str>) {
+    match ty {
+        TypeExpr::Named(_) => {}
+        TypeExpr::Nullable(inner) => collect_type_import_glob_exprs(inner, out),
+        TypeExpr::Union(types) | TypeExpr::Generic(_, types) => {
+            for ty in types {
+                collect_type_import_glob_exprs(ty, out);
+            }
+        }
+        TypeExpr::Constrained(_, constraint) => collect_expr_import_glob_exprs(constraint, out),
+    }
+}
+
+fn collect_expr_import_glob_exprs<'a>(expr: &'a Expr, out: &mut Vec<&'a str>) {
+    match expr {
+        Expr::ImportGlob(uri, _) => out.push(uri),
+        Expr::New(_, body, _) | Expr::ObjectBody(body) => collect_import_glob_exprs(body, out),
+        Expr::InferredNew(ty, body) => {
+            collect_type_import_glob_exprs(ty, out);
+            collect_import_glob_exprs(body, out);
+        }
+        Expr::Field(value, _)
+        | Expr::NullSafeField(value, _)
+        | Expr::Unop(_, value)
+        | Expr::Throw(value)
+        | Expr::TemplateLocals(_, value)
+        | Expr::Trace(value, _)
+        | Expr::Read(value, _)
+        | Expr::ReadOrNull(value, _)
+        | Expr::ReadGlob(value, _) => collect_expr_import_glob_exprs(value, out),
+        Expr::Index(left, right) | Expr::Binop(_, left, right) | Expr::Let(_, left, right) => {
+            collect_expr_import_glob_exprs(left, out);
+            collect_expr_import_glob_exprs(right, out);
+        }
+        Expr::Call(callee, args) => {
+            collect_expr_import_glob_exprs(callee, out);
+            for arg in args {
+                collect_expr_import_glob_exprs(arg, out);
+            }
+        }
+        Expr::If(condition, then_expr, else_expr) => {
+            collect_expr_import_glob_exprs(condition, out);
+            collect_expr_import_glob_exprs(then_expr, out);
+            collect_expr_import_glob_exprs(else_expr, out);
+        }
+        Expr::Lambda(_, body) => collect_expr_import_glob_exprs(body, out),
+        Expr::StringInterpolation(parts) => {
+            for part in parts {
+                if let StringInterpPart::Expr(expr) = part {
+                    collect_expr_import_glob_exprs(expr, out);
+                }
+            }
+        }
+        Expr::Is(value, ty) | Expr::As(value, ty) => {
+            collect_expr_import_glob_exprs(value, out);
+            collect_type_import_glob_exprs(ty, out);
+        }
+        Expr::Null
+        | Expr::Bool(_)
+        | Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::String(_)
+        | Expr::Ident(_)
+        | Expr::Import(_, _) => {}
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Module {
     /// The name from the `module` declaration, if any.
@@ -27,8 +135,6 @@ pub struct Module {
     /// URIs of the module's `import("...")` expressions, in source order.
     /// Glob `import*(...)` expressions are not included.
     pub import_exprs: Vec<String>,
-    /// URIs of `import*(...)` expressions, including inside interpolations.
-    pub import_glob_exprs: Vec<String>,
     pub annotations: Vec<Annotation>,
     pub body: Body,
     /// Names of the module's `local` type aliases, which importers cannot see.
@@ -49,11 +155,18 @@ impl Module {
                     .map(|import| (import.uri.as_str(), import.is_glob)),
             )
             .chain(self.import_exprs.iter().map(|uri| (uri.as_str(), false)))
-            .chain(
-                self.import_glob_exprs
-                    .iter()
-                    .map(|uri| (uri.as_str(), true)),
-            )
+            .chain(self.import_glob_exprs().into_iter().map(|uri| (uri, true)))
+    }
+
+    /// URIs of the module's `import*(...)` expressions, in source order,
+    /// including ones inside annotations, type constraints and interpolations.
+    fn import_glob_exprs(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        for annotation in &self.annotations {
+            collect_import_glob_exprs(&annotation.body, &mut out);
+        }
+        collect_import_glob_exprs(&self.body, &mut out);
+        out
     }
 }
 
