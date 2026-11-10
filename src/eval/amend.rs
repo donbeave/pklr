@@ -28,6 +28,65 @@ impl Evaluator {
                 })
                 .filter(|value| matches!(value, Value::Object(..) | Value::List(_)))
         };
+        // The class a `Listing<T>` property's untyped `new { ... }` elements
+        // build, resolved where the class is declared. An importing module
+        // may not see `T` by that name, or may declare its own `T`.
+        let element_class = |name: &str| {
+            let source = prototype_source.as_ref()?;
+            let ty = source.entries.iter().rev().find_map(|entry| match entry {
+                Entry::Property(prop) if &*prop.name == name => prop.type_ann.as_ref(),
+                _ => None,
+            })?;
+            let crate::parser::TypeExpr::Named(type_name) = listing_element_type(ty)? else {
+                return None;
+            };
+            let aliases = source.scope_type_aliases();
+            let mut type_name = type_name.as_str();
+            for _ in 0..32 {
+                match aliases.get(type_name).map(|ty| &**ty) {
+                    Some(crate::parser::TypeExpr::Named(target)) => type_name = target,
+                    _ => break,
+                }
+            }
+            let mut parts = type_name.split('.');
+            let head = parts.next()?;
+            // A class's captured scope lacks the classes declared with or
+            // after it (`block: Listing<Task>` inside `Task`); those are in
+            // its module's final scope.
+            let mut value = source
+                .scope()
+                .get(head)
+                .or_else(|| {
+                    let (namespace, _) = source.type_identity.as_deref()?.rsplit_once('.')?;
+                    self.module_scopes
+                        .values()
+                        .find(|module| module.type_namespace.as_deref() == Some(namespace))?
+                        .values
+                        .get(head)
+                })?
+                .clone();
+            for part in parts {
+                let Value::Object(map, _) = &value else {
+                    return None;
+                };
+                value = map.get(part)?.clone();
+            }
+            matches!(&value, Value::Object(_, Some(class)) if class.kind == ObjectKind::Class)
+                .then_some(value)
+        };
+        let element_rewrites = |entry: &Entry| match entry {
+            Entry::Property(prop)
+                if !has_modifier(&prop.modifiers, Modifier::Local)
+                    && prop.value.is_none()
+                    && prop
+                        .body
+                        .as_ref()
+                        .is_some_and(|body| entries_have_untyped_new_element(body)) =>
+            {
+                element_class(&prop.name)
+            }
+            _ => None,
+        };
         let amended_default = |entry: &Entry| match entry {
             Entry::Property(prop)
                 if !has_modifier(&prop.modifiers, Modifier::Local)
@@ -42,7 +101,7 @@ impl Evaluator {
         };
         if !overlay_entries
             .iter()
-            .any(|entry| amended_default(entry).is_some())
+            .any(|entry| amended_default(entry).is_some() || element_rewrites(entry).is_some())
         {
             return None;
         }
@@ -50,6 +109,25 @@ impl Evaluator {
             overlay_entries
                 .iter()
                 .map(|entry| {
+                    if let (Entry::Property(prop), Some(class)) = (entry, element_rewrites(entry)) {
+                        let binding = format!("#element:{}", prop.name);
+                        amendment_scope
+                            .values
+                            .insert(binding.as_str().into(), class);
+                        // Mark the binding as a type, as a type alias of the
+                        // class is, so `new` accepts it as a class name.
+                        amendment_scope
+                            .values
+                            .insert(type_alias_marker(&binding).into(), Value::Bool(true));
+                        let mut prop = (**prop).clone();
+                        if let Some(body) = &mut prop.body {
+                            rewrite_untyped_new_elements(
+                                Arc::make_mut(body).as_mut_slice(),
+                                &binding,
+                            );
+                        }
+                        return Entry::Property(Arc::new(prop));
+                    }
                     let (Entry::Property(prop), Some(value)) = (entry, amended_default(entry))
                     else {
                         return entry.clone();
@@ -198,6 +276,24 @@ impl Evaluator {
             if let Entry::Property(prop) = entry
                 && let Some(replacement) = overlay_by_name.get(prop.name.as_ref())
             {
+                // A union type has no default unless one alternative is marked
+                // `*`. Resolve the class's aliases here, where they are in
+                // scope; the amending module may not see them.
+                if let Entry::Property(overlay_prop) = replacement
+                    && overlay_prop.body.is_some()
+                    && overlay_prop.value.is_none()
+                    && prop.value.is_none()
+                    && prop.body.is_none()
+                    && let Some(ty) = &prop.type_ann
+                    && let crate::parser::TypeExpr::Union(variants) =
+                        resolve_type_alias_in(ty, base_source.scope_type_aliases())
+                    && !variants.iter().any(is_default_type)
+                {
+                    return Err(Error::Eval(format!(
+                        "Tried to read property `{}` but its value is undefined.",
+                        prop.name
+                    )));
+                }
                 if let Entry::Property(overlay_prop) = replacement
                     && overlay_prop.body.is_some()
                     && overlay_prop.value.is_none()
@@ -879,6 +975,7 @@ impl Evaluator {
                 &amendment_scope,
                 depth + 1,
                 amended.make_mut(),
+                None,
             )?;
             return Ok(Value::List(amended));
         }
@@ -1452,4 +1549,46 @@ pub(super) fn amended_function(arity: usize, function: Value, body: &Body, scope
         )),
         Arc::new(captured),
     )
+}
+
+/// Whether a listing body has an element whose result is an untyped `new`.
+fn entries_have_untyped_new_element(entries: &[Entry]) -> bool {
+    entries.iter().any(|entry| match entry {
+        Entry::Elem(expr) => parser::has_untyped_result_new(expr),
+        Entry::ForGenerator(generator) => entries_have_untyped_new_element(&generator.body),
+        Entry::WhenGenerator(generator) => {
+            entries_have_untyped_new_element(&generator.body)
+                || generator
+                    .else_body
+                    .as_ref()
+                    .is_some_and(|body| entries_have_untyped_new_element(body))
+        }
+        _ => false,
+    })
+}
+
+/// Make each untyped `new { ... }` element of a listing body build the class
+/// bound to `binding`, including inside `for` and `when` bodies.
+fn rewrite_untyped_new_elements(entries: &mut [Entry], binding: &str) {
+    for entry in entries {
+        match entry {
+            Entry::Elem(expr) => parser::rewrite_untyped_result_new(expr, &mut |body| {
+                Expr::New(Some(binding.to_string()), body, Vec::new())
+            }),
+            Entry::ForGenerator(generator) => rewrite_untyped_new_elements(
+                Arc::make_mut(&mut generator.body).as_mut_slice(),
+                binding,
+            ),
+            Entry::WhenGenerator(generator) => {
+                rewrite_untyped_new_elements(
+                    Arc::make_mut(&mut generator.body).as_mut_slice(),
+                    binding,
+                );
+                if let Some(body) = &mut generator.else_body {
+                    rewrite_untyped_new_elements(Arc::make_mut(body).as_mut_slice(), binding);
+                }
+            }
+            _ => {}
+        }
+    }
 }

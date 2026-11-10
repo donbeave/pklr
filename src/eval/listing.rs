@@ -1,6 +1,7 @@
 //! Evaluating the members and entries of a `Listing` body.
 
 use super::*;
+use crate::parser::TypeExpr;
 
 impl Evaluator {
     /// Read one member of the amended receiver without forcing unrelated
@@ -135,12 +136,15 @@ impl Evaluator {
         Ok(())
     }
 
+    /// `element_type` is the listing's declared element type, `T` in
+    /// `Listing<T>`: an untyped `new { ... }` element builds a `T`.
     pub(super) fn eval_listing_entries(
         &mut self,
         entries: &[Entry],
         scope: &Scope,
         depth: usize,
         items: &mut Vec<Value>,
+        element_type: Option<&TypeExpr>,
     ) -> Result<()> {
         let mut listing_scope = scope.child();
         // A body's locals and properties (`default`) are visible to all of
@@ -177,7 +181,17 @@ impl Evaluator {
             match entry {
                 Entry::Predicate(..) => return Err(member_predicates_unsupported()),
                 Entry::Property(_) => {}
-                Entry::Elem(expr) => items.push(self.eval_expr(expr, &listing_scope, depth + 1)?),
+                Entry::Elem(expr) => {
+                    let value = match element_type {
+                        Some(ty) if crate::parser::has_untyped_result_new(expr) => {
+                            let mut inferred = expr.clone();
+                            crate::parser::infer_method_return_new(&mut inferred, ty);
+                            self.eval_expr(&inferred, &listing_scope, depth + 1)?
+                        }
+                        _ => self.eval_expr(expr, &listing_scope, depth + 1)?,
+                    };
+                    items.push(value);
+                }
                 Entry::DynProperty(index, value) => {
                     let index = self.eval_expr(index, &listing_scope, depth + 1)?;
                     let Value::Int(index) = index else {
@@ -224,7 +238,13 @@ impl Evaluator {
                         if let Some(key_var) = &generator.key_var {
                             iter_scope.set(key_var, key);
                         }
-                        self.eval_listing_entries(&generator.body, &iter_scope, depth + 1, items)?;
+                        self.eval_listing_entries(
+                            &generator.body,
+                            &iter_scope,
+                            depth + 1,
+                            items,
+                            element_type,
+                        )?;
                     }
                 }
                 Entry::WhenGenerator(generator) => {
@@ -236,7 +256,13 @@ impl Evaluator {
                         generator.else_body.as_deref().map(Vec::as_slice)
                     };
                     if let Some(selected) = selected {
-                        self.eval_listing_entries(selected, &listing_scope, depth + 1, items)?;
+                        self.eval_listing_entries(
+                            selected,
+                            &listing_scope,
+                            depth + 1,
+                            items,
+                            element_type,
+                        )?;
                     }
                 }
                 _ => {}
@@ -287,5 +313,18 @@ pub(super) fn check_no_elements(source: &ObjectSource, entries: &[Entry]) -> Res
         ),
         None if source.kind == ObjectKind::Mapping => check_member_kinds("Mapping", entries, false),
         None => Ok(()),
+    }
+}
+
+/// `T` in a declared `Listing<T>` (or `Listing<T>?`), when an untyped
+/// `new { ... }` element should build it.
+pub(super) fn listing_element_type(ty: &TypeExpr) -> Option<&TypeExpr> {
+    match ty {
+        TypeExpr::Generic(name, args) if name == "Listing" => match args.as_slice() {
+            [element] if crate::parser::infers_new(element) => Some(element),
+            _ => None,
+        },
+        TypeExpr::Nullable(inner) => listing_element_type(inner),
+        _ => None,
     }
 }

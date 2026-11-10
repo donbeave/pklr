@@ -54,6 +54,21 @@ impl Evaluator {
                 .filter(|value| !is_null_value(value))
                 .or(nullable_default.as_ref())
                 .or(scoped);
+            // A union type has no default unless one alternative is marked
+            // `*`, so a body amending an unset property of that type amends
+            // an undefined value.
+            if amendment_base.is_none()
+                && let Some(crate::parser::TypeExpr::Union(variants)) = prop
+                    .type_ann
+                    .as_ref()
+                    .map(|ty| resolve_type_alias(ty, scope))
+                && !variants.iter().any(is_default_type)
+            {
+                return Err(Error::Eval(format!(
+                    "Tried to read property `{}` but its value is undefined.",
+                    prop.name
+                )));
+            }
             if let Some(Value::List(items)) = amendment_base
                 && matches!(items.kind(), ListKind::List | ListKind::Set)
             {
@@ -87,7 +102,14 @@ impl Evaluator {
                 amendment_scope.set("super", Value::List(items.clone()));
                 amendment_scope.receiver_entries = Some(body.clone());
                 amendment_scope.receiver_list_base = Some(items.len());
-                self.eval_listing_entries(body, &amendment_scope, depth, items.make_mut())?;
+                let element_type = prop.type_ann.as_ref().and_then(listing_element_type);
+                self.eval_listing_entries(
+                    body,
+                    &amendment_scope,
+                    depth,
+                    items.make_mut(),
+                    element_type,
+                )?;
                 return Ok(Some(Value::List(items)));
             }
             // `foo { ... }` — object body amendment.
@@ -190,6 +212,7 @@ impl Evaluator {
             }
             if let Some(default) = &mut default {
                 apply_mapping_type_annotation(default, Some(ty));
+                capture_mapping_value_types(default, scope);
             }
             if require_union_default
                 && default.is_none()
@@ -226,6 +249,14 @@ impl Evaluator {
         )
     }
 
+    /// Evaluate an object body's entries into an object.
+    ///
+    /// `entry_scopes`, parallel to `entries`, gives each entry that an earlier
+    /// amendment introduced the scope it was written in; `None` uses `scope`.
+    /// `inherited_source` is the source of the object being amended: its evaluated
+    /// properties seed the new object's members, and a `Mapping` source keeps
+    /// mapping-key identity. `initial_non_const_members` adds members that a
+    /// `const` member may not reference.
     #[allow(clippy::too_many_arguments)] // Mapping context is independent of inherited source.
     pub(super) fn eval_entries_with_lexical_scopes(
         &mut self,
@@ -444,6 +475,7 @@ impl Evaluator {
             kind: ObjectKind::Object,
             is_parsed_json: false,
             prototype: None,
+            type_members: Default::default(),
         };
         Ok(Value::Object(Arc::new(st.map), Some(Arc::new(source))))
     }
@@ -1150,6 +1182,7 @@ impl Evaluator {
                         kind: ObjectKind::Object,
                         is_parsed_json: false,
                         prototype: None,
+                        type_members: Default::default(),
                     },
                 };
                 *result_src = Some(std::sync::Arc::new(new_src));

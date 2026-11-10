@@ -85,6 +85,13 @@ impl Evaluator {
         members
     }
 
+    /// Evaluate `module`, read from `path`, into its module object.
+    ///
+    /// `inherited_scope` is the scope an amending or extending module inherits
+    /// from its base. `requested_fields`, when set, limits evaluation to the
+    /// properties an importer reads. At import `depth` above 0 the object keeps
+    /// the module's classes as members, recorded in its source's `type_members` so
+    /// renderers skip them.
     pub(super) fn eval_module_with_scope(
         &mut self,
         module: &Module,
@@ -556,7 +563,27 @@ impl Evaluator {
         // An abstract module also keeps a source, so `new` can reject it.
         let deprecated = collect_deprecated(body);
         let is_abstract = module_is_abstract(module);
-        let source = if deprecated.is_empty() && poisoned_members.is_empty() && !is_abstract {
+        // An imported module keeps its classes as members for dotted access;
+        // record them so renderers do not output them as properties.
+        // Only a member whose value is the class itself is a declaration. A
+        // property can share its name with an inherited non-class typealias
+        // and stays data.
+        let type_members: Arc<[Arc<str>]> = if depth == 0 {
+            Arc::from([])
+        } else {
+            out.iter()
+                .filter(|(name, value)| {
+                    (class_names.contains(&***name) || inherited_type_names.contains(&***name))
+                        && matches!(value, Value::Object(_, Some(source)) if source.kind == ObjectKind::Class)
+                })
+                .map(|(name, _)| name.clone())
+                .collect()
+        };
+        let source = if deprecated.is_empty()
+            && poisoned_members.is_empty()
+            && !is_abstract
+            && type_members.is_empty()
+        {
             None
         } else {
             Some(Arc::new(ObjectSource {
@@ -580,6 +607,7 @@ impl Evaluator {
                 kind: ObjectKind::Object,
                 is_parsed_json: false,
                 prototype: None,
+                type_members,
             }))
         };
         let mut effective_late_properties = IndexMap::new();
@@ -616,6 +644,7 @@ impl Evaluator {
                 values: scope.flatten(),
                 type_aliases: scope.flatten_type_aliases(),
                 module_identities: scope.flatten_module_identities(),
+                type_namespace: scope.type_namespace.clone(),
                 late_properties: effective_late_properties.into_values().collect(),
             },
         );

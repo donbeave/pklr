@@ -406,6 +406,33 @@ pub(super) fn apply_mapping_type_annotation(
 
 /// The source of a mapping known only by its type: no entries to rebuild it
 /// from, just its kind.
+/// Bind the classes a `Mapping` value type names, resolved where the type is
+/// declared, into the captured scope of a typed property's default mapping.
+/// That default captures no bindings of its own, and its entries are
+/// evaluated later, possibly in another module that cannot resolve those
+/// names, as when an imported class declares `nodes: Mapping<String, Node>`.
+/// A declared value (`x: Mapping<String, T> = new { ... }`) already captures
+/// the scope it is written in.
+pub(super) fn capture_mapping_value_types(value: &mut Value, scope: &Scope) {
+    let Value::Object(_, Some(src)) = value else {
+        return;
+    };
+    let missing = src
+        .mapping_value_types
+        .iter()
+        .map(|name| mapping_value_type_base(name))
+        .filter(|name| src.scope().get(*name).is_none())
+        .filter_map(|name| Some((name.to_string(), resolve_dotted(scope, name)?)))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return;
+    }
+    let values = &mut Arc::make_mut(src).captured.parts_mut().values;
+    for (name, class) in missing {
+        values.insert(nm(&name), class);
+    }
+}
+
 pub(super) fn mapping_source() -> ObjectSource {
     ObjectSource {
         entries: Vec::new().into(),
@@ -426,6 +453,7 @@ pub(super) fn mapping_source() -> ObjectSource {
         kind: ObjectKind::Mapping,
         is_parsed_json: false,
         prototype: None,
+        type_members: Default::default(),
     }
 }
 
@@ -1051,6 +1079,7 @@ impl Evaluator {
                                         kind: ObjectKind::Object,
                                         is_parsed_json: false,
                                         prototype: None,
+                                        type_members: Default::default(),
                                     },
                                 };
                                 *result_src = Some(std::sync::Arc::new(new_src));

@@ -5344,3 +5344,157 @@ m: Mapping<String, R | Listing<Int>> = new {
     );
     assert_eq!(result["m"]["l"], serde_json::json!([1, 2]));
 }
+
+#[test]
+fn typed_listing_new_element_takes_the_element_type() {
+    let result = eval(
+        r#"
+class Task { name: String; loopVar: String = "item" }
+class Play { tasks: Listing<Task> }
+p = new Play { tasks { new { name = "t" } } }
+"#,
+    );
+    assert_eq!(
+        result["p"]["tasks"],
+        serde_json::json!([{"name": "t", "loopVar": "item"}])
+    );
+}
+
+#[test]
+fn typed_listing_new_element_is_checked_against_the_element_type() {
+    let header = r#"
+class Task { name: String; loopVar: String = "item" }
+class Play { tasks: Listing<Task> }
+"#;
+    let error = eval_fails(&format!(
+        "{header}p = new Play {{ tasks {{ new {{ name = 5 }} }} }}"
+    ));
+    assert!(error.contains("expected String"), "{error}");
+    let error = eval_fails(&format!(
+        "{header}p = new Play {{ tasks {{ new {{ nme = \"t\" }} }} }}"
+    ));
+    assert!(error.contains("nme"), "{error}");
+}
+
+#[test]
+fn typed_listing_new_element_in_every_listing_form() {
+    let result = eval(
+        r#"
+class Task { name: String; loopVar: String = "item" }
+class Play { tasks: Listing<Task> }
+class Optional { tasks: Listing<Task>? }
+declared: Listing<Task> = new { new { name = "a" } }
+constructed = new Listing<Task> { new { name = "b" } }
+generated = new Play {
+  tasks {
+    for (n in List("c", "d")) { new { name = n } }
+    when (true) { new { name = "e" } }
+  }
+}
+nullable = new Optional { tasks { new { name = "f" } } }
+amended = (generated) { tasks { new { name = "g" } } }
+"#,
+    );
+    let task = |name: &str| serde_json::json!({"name": name, "loopVar": "item"});
+    assert_eq!(result["declared"], serde_json::json!([task("a")]));
+    assert_eq!(result["constructed"], serde_json::json!([task("b")]));
+    assert_eq!(
+        result["generated"]["tasks"],
+        serde_json::json!([task("c"), task("d"), task("e")])
+    );
+    assert_eq!(result["nullable"]["tasks"], serde_json::json!([task("f")]));
+    assert_eq!(
+        result["amended"]["tasks"],
+        serde_json::json!([task("c"), task("d"), task("e"), task("g")])
+    );
+}
+
+#[test]
+fn typed_listing_new_element_with_builtin_or_union_type_stays_untyped() {
+    let result = eval(
+        r#"
+d: Listing<Dynamic> = new { new { a = 1 } }
+u: Listing<Int|String> = new { 1; "x" }
+"#,
+    );
+    assert_eq!(result["d"], serde_json::json!([{"a": 1}]));
+    assert_eq!(result["u"], serde_json::json!([1, "x"]));
+}
+
+#[test]
+fn amending_union_property_without_default_fails() {
+    // Matches `pkl eval` 0.33.0: a union has no default unless one
+    // alternative is marked `*`, so the body amends an undefined value.
+    for source in [
+        r#"
+class Ref { path: String }
+class C { argv: Listing<String>|Ref }
+c = new C { argv { "a" } }
+"#,
+        r#"
+class Ref { path: String }
+typealias Args = Listing<String>|Ref
+class C { argv: Args }
+c = new C { argv { "a" } }
+"#,
+        r#"
+class Ref { path: String }
+class C { r: Ref|Listing<String> }
+c = new C { r { path = "x" } }
+"#,
+    ] {
+        let error = eval_fails(source);
+        assert!(
+            error.contains("but its value is undefined"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
+fn amending_union_property_with_default_or_value_succeeds() {
+    let result = eval(
+        r#"
+class Ref { path: String }
+class Starred { argv: *Listing<String>|Ref }
+class Valued { argv: Listing<String>|Ref = new Listing { "z" } }
+class Plain { argv: Listing<String>|Ref }
+starred = new Starred { argv { "a" } }
+valued = new Valued { argv { "a" } }
+assigned = new Plain { argv = new Ref { path = "p" } }
+"#,
+    );
+    assert_eq!(result["starred"]["argv"], serde_json::json!(["a"]));
+    assert_eq!(result["valued"]["argv"], serde_json::json!(["z", "a"]));
+    assert_eq!(result["assigned"]["argv"]["path"], "p");
+}
+
+#[test]
+fn union_default_alternative_keeps_its_constraint() {
+    // Matches `pkl eval` 0.33.0: the `*` default must satisfy the
+    // alternative's constraint, and so must values of that alternative.
+    for source in [
+        "class C { argv: *Listing<String>(!this.isEmpty)|Int }\nc = new C {}\n",
+        "class C { argv: *Listing<String>(!this.isEmpty)|Int }\nc = new C { argv = new Listing {} }\n",
+        "class C { argv: *Listing<String>(!this.isEmpty)|Int }\nc = new C { argv {} }\n",
+        "typealias Args = *Listing<String>(!this.isEmpty)|Int\nclass C { argv: Args }\nc = new C {}\n",
+    ] {
+        let error = eval_fails(source);
+        assert!(error.contains("argv"), "{source}: {error}");
+    }
+    let result = eval(
+        r#"
+class C { argv: *Listing<String>(!this.isEmpty)|Int }
+class N { n: *Int(this > 0)|String = 5 }
+class M { m: *Mapping<String, Int>(!this.isEmpty)|Int }
+amended = new C { argv { "x" } }
+other = new C { argv = 3 }
+defaulted = new N {}
+mapping = new M { m { ["a"] = 1 } }
+"#,
+    );
+    assert_eq!(result["amended"]["argv"], serde_json::json!(["x"]));
+    assert_eq!(result["other"]["argv"], 3);
+    assert_eq!(result["defaulted"]["n"], 5);
+    assert_eq!(result["mapping"]["m"]["a"], 1);
+}

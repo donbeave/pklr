@@ -326,6 +326,10 @@ pub struct ObjectSource {
     /// `new { ... }` assigned to one of the instance's properties amends the
     /// class default of that property, not the receiver's current value.
     pub(crate) prototype: Option<Value>,
+    /// Names of the classes (and typealiases to classes) a module declares or
+    /// inherits. They are members, so `module.Class` resolves, but not
+    /// properties, so renderers skip them.
+    pub(crate) type_members: Arc<[Arc<str>]>,
 }
 
 /// What an object with an [`ObjectSource`] is, beyond its members. Objects
@@ -398,11 +402,18 @@ impl ObjectSource {
     pub(crate) fn is_metadata_only(&self) -> bool {
         (self.poisoned_members.is_some()
             || self.is_abstract
+            || !self.type_members.is_empty()
             || (matches!(self.kind, ObjectKind::Mapping) && self.mapping_value_types.is_empty()))
             && self.entries.is_empty()
             && self.evaluated_properties.is_empty()
             && self.type_name.is_none()
     }
+}
+
+/// Whether `key` names a class (or typealias to one) that the object, a
+/// module, declares rather than a property it renders.
+pub(crate) fn is_type_member(source: Option<&ObjectSource>, key: &str) -> bool {
+    source.is_some_and(|source| source.type_members.iter().any(|name| &**name == key))
 }
 
 /// Which Pkl collection a [`Value::List`] is. All three render the same, but
@@ -1017,12 +1028,15 @@ impl Value {
                 unrenderable.get_or_insert(self);
                 serde_json::Value::Null
             }
-            Value::Object(map, _) => {
+            Value::Object(map, source) => {
                 let mut obj = serde_json::Map::new();
                 for (k, v) in map.iter() {
                     // The result is discarded once a value fails.
                     if unrenderable.is_some() {
                         break;
+                    }
+                    if is_type_member(source.as_deref(), k) {
+                        continue;
                     }
                     obj.insert(
                         display_storage_key(k).to_string(),
@@ -1391,6 +1405,7 @@ mod same_data_tests {
             kind: ObjectKind::Object,
             is_parsed_json: false,
             prototype: None,
+            type_members: Default::default(),
         };
         Value::Object(Arc::new(map), Some(Arc::new(source)))
     }

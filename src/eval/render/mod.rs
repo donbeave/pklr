@@ -930,6 +930,8 @@ pub(crate) trait StringRenderer<'a> {
         self.end_listing(items.is_empty())
     }
 
+    /// Visit an object's members for a text renderer, properties before entries.
+    /// Methods and a module's declared classes are not members it outputs.
     fn visit_object(
         &mut self,
         kind: Kind,
@@ -942,8 +944,11 @@ pub(crate) trait StringRenderer<'a> {
         // Pkl keeps an object body's properties ahead of its entries.
         let mut ordered: Vec<(MemberKind, &Arc<str>, &Value)> = map
             .iter()
-            // Methods are stored as function-valued members.
-            .filter(|(_, value)| !matches!(value, Value::Lambda(..)))
+            // Methods are stored as function-valued members, and a module's
+            // classes are members but not properties.
+            .filter(|(key, value)| {
+                !matches!(value, Value::Lambda(..)) && !crate::value::is_type_member(source, key)
+            })
             .map(|(key, value)| (members.kind_of(key), key, value))
             .collect();
         ordered.sort_by_key(|(member, ..)| *member == MemberKind::Entry);
@@ -1356,7 +1361,9 @@ impl JsonValue<'_> {
                             _ => PathPart::Property(key),
                         });
                     }
-                    let converted = if matches!(member, Value::Lambda(..)) {
+                    let converted = if matches!(member, Value::Lambda(..))
+                        || crate::value::is_type_member(source.as_deref(), key)
+                    {
                         None
                     } else {
                         self.convert_member(member)?
@@ -1388,6 +1395,9 @@ impl JsonValue<'_> {
         Ok((self.value(value, kind)?, kind))
     }
 
+    /// Render `value`, already classified as `kind`, as JSON. A module's declared
+    /// classes and its methods are skipped, and with `omit_nulls` so are null
+    /// members.
     #[cfg(feature = "native-io")]
     fn value(&mut self, value: &Value, kind: Kind) -> Result<serde_json::Value> {
         if kind == Kind::Typed
@@ -1436,8 +1446,11 @@ impl JsonValue<'_> {
                         return Err(cannot_render_non_string_key(&key_value(key), "JSON"));
                     }
                     // Methods are stored as function-valued members, and an
-                    // object without a source cannot tell them from data.
-                    if matches!(member, Value::Lambda(..)) {
+                    // object without a source cannot tell them from data. A
+                    // module's classes are members but not properties.
+                    if matches!(member, Value::Lambda(..))
+                        || crate::value::is_type_member(source.as_deref(), key)
+                    {
                         continue;
                     }
                     if let Some(members) = &members {

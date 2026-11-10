@@ -707,7 +707,8 @@ steps {
         serde_json::json!({
             "steps": {
                 "a": {"check": {"command": "lint"}, "prefix": "x"},
-                "b": {"check": "true", "prefix": null}
+                // `pkl eval -f json` omits the null `prefix`.
+                "b": {"check": "true"}
             }
         })
     );
@@ -3329,4 +3330,295 @@ plain = import("plain.pkl")
             .module_references()
             .any(|reference| reference == ("plain.pkl", false))
     );
+}
+
+#[test]
+fn imported_module_value_does_not_render_its_classes() {
+    let temp = TestTempDir::new("pklr_test_imported_module_classes");
+    std::fs::write(
+        temp.path().join("lib.pkl"),
+        "class C { opt: Int = 1 }\nclass Timed { timeout: Duration = 5.s }\ntypealias Alias = C\nfunction f(x) = x\nvalue = 1\n",
+    )
+    .unwrap();
+    let main = temp.path().join("main.pkl");
+    std::fs::write(
+        &main,
+        "import \"lib.pkl\" as lib\nresult = lib\nviaC = new lib.C {}\nviaAlias = new lib.Alias {}\ncalled = lib.f(2)\n",
+    )
+    .unwrap();
+    // Matches `pkl eval -f json` 0.33.0: classes are members of `lib`, so
+    // `lib.C` resolves, but they are not properties, so `lib` renders without them.
+    assert_eq!(
+        pklr::eval_to_json(&main).unwrap(),
+        serde_json::json!({
+            "result": {"value": 1},
+            "viaC": {"opt": 1},
+            "viaAlias": {"opt": 1},
+            "called": 2
+        })
+    );
+
+    // `Value::try_to_json` walks objects separately from `to_json`.
+    let value = pklr::eval::Evaluator::new().eval_file(&main).unwrap();
+    // `Timed`'s `Duration` default can't render as JSON; as a declared class
+    // it is never rendered, so this succeeds.
+    let checked = value.try_to_json().unwrap();
+    assert_eq!(checked["result"]["value"], 1);
+    assert!(checked["result"].get("C").is_none(), "{checked}");
+    assert!(checked["result"].get("Alias").is_none(), "{checked}");
+    assert!(checked["result"].get("Timed").is_none(), "{checked}");
+
+    // A class held by a property is data, not a declaration: a converter for
+    // its path still applies (`pkl eval` 0.33.0 renders `"class"`).
+    let converted = temp.path().join("converted.pkl");
+    std::fs::write(
+        &converted,
+        "import \"lib.pkl\" as lib\nd { c = lib.C }\noutput { renderer = new JsonRenderer { converters { [\"d.c\"] = (_) -> \"class\" } } }\n",
+    )
+    .unwrap();
+    assert_eq!(
+        pklr::eval_to_json(&converted).unwrap(),
+        serde_json::json!({"d": {"c": "class"}})
+    );
+
+    let yaml = temp.path().join("yaml.pkl");
+    std::fs::write(
+        &yaml,
+        "import \"lib.pkl\" as lib\nresult = lib\noutput { renderer = new YamlRenderer {} }\n",
+    )
+    .unwrap();
+    assert_eq!(pklr::eval_to_text(&yaml).unwrap(), "result:\n  value: 1\n");
+}
+
+#[test]
+fn imported_module_keeps_property_named_like_an_inherited_typealias() {
+    // A property can share its name with an inherited non-class typealias
+    // (see `typealias_does_not_replace_inherited_property_of_same_name`).
+    // Rendering the module as an import must keep it, as at the top level.
+    let temp = TestTempDir::new("pklr_test_imported_typealias_named_property");
+    let dir = temp.path();
+    std::fs::write(
+        dir.join("P.pkl"),
+        "open module P\nname: String = \"base\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("alias.pkl"),
+        "extends \"P.pkl\"\ntypealias name = String\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("child.pkl"), "amends \"alias.pkl\"\n").unwrap();
+    std::fs::write(
+        dir.join("main.pkl"),
+        "import \"child.pkl\" as c\nresult = c\n",
+    )
+    .unwrap();
+    assert_eq!(
+        pklr::eval_to_json(&dir.join("main.pkl")).unwrap(),
+        serde_json::json!({"result": {"name": "base"}})
+    );
+}
+
+#[test]
+fn converted_mapping_keys_keep_imported_module_classes_in_their_identity() {
+    // Two imported modules with the same properties but different classes are
+    // different keys. Hiding classes when rendering must not merge them when
+    // a converter turns mapping keys into those modules.
+    let temp = TestTempDir::new("pklr_test_converted_key_class_identity");
+    let dir = temp.path();
+    std::fs::write(dir.join("one.pkl"), "class First {}\nvalue = 1\n").unwrap();
+    std::fs::write(dir.join("two.pkl"), "class Second {}\nvalue = 1\n").unwrap();
+    std::fs::write(
+        dir.join("main.pkl"),
+        r#"import "one.pkl"
+import "two.pkl"
+m = new Mapping { ["a"] = 1; ["b"] = 2 }
+output {
+  renderer = new JsonRenderer {
+    converters { [String] = (s) -> if (s == "a") one else if (s == "b") two else s }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let mut evaluator = pklr::eval::Evaluator::new();
+    let value = evaluator.eval_file(&dir.join("main.pkl")).unwrap();
+    let converted = evaluator.apply_converters(value).unwrap();
+    let pklr::Value::Object(module, _) = converted else {
+        panic!("module is not an object");
+    };
+    let Some(pklr::Value::Object(entries, _)) = module.get("m") else {
+        panic!("m is not a mapping");
+    };
+    assert_eq!(entries.len(), 2, "converted keys collided: {entries:?}");
+}
+
+#[test]
+fn imported_class_mapping_entries_take_the_declared_value_type() {
+    let temp = TestTempDir::new("pklr_test_imported_mapping_value_type");
+    std::fs::write(
+        temp.path().join("model.pkl"),
+        "class Node { fast: Listing<String>; bulk: Listing<String> }\nclass Cluster { nodes: Mapping<String, Node> }\n",
+    )
+    .unwrap();
+    let main = temp.path().join("main.pkl");
+    std::fs::write(
+        &main,
+        r#"import "model.pkl" as M
+class Node { other: Int = 7 }
+amended: M.Cluster = new { nodes { ["a"] { fast { "x" }; bulk {} } } }
+constructed: M.Cluster = new { nodes { ["b"] = new { bulk {} } } }
+mine = new Node {}
+"#,
+    )
+    .unwrap();
+    // Matches `pkl eval -f json` 0.33.0: `Node` in `Mapping<String, Node>`
+    // is model.pkl's class, even where the importer declares its own `Node`.
+    assert_eq!(
+        pklr::eval_to_json(&main).unwrap(),
+        serde_json::json!({
+            "amended": {"nodes": {"a": {"fast": ["x"], "bulk": []}}},
+            "constructed": {"nodes": {"b": {"fast": [], "bulk": []}}},
+            "mine": {"other": 7}
+        })
+    );
+}
+
+#[test]
+fn amending_imported_union_alias_property_without_default_fails() {
+    let temp = TestTempDir::new("pklr_test_imported_union_alias");
+    std::fs::write(
+        temp.path().join("lib.pkl"),
+        "class Ref { path: String }\ntypealias Args = Listing<String>|Ref\ntypealias Starred = *Listing<String>|Ref\nclass C { argv: Args }\nclass S { argv: Starred }\n",
+    )
+    .unwrap();
+    // The alias is declared in lib.pkl, which the amending module does not
+    // see by name. `pkl eval` 0.33.0 still rejects the amendment.
+    let failing = temp.path().join("failing.pkl");
+    std::fs::write(
+        &failing,
+        "import \"lib.pkl\" as L\nc = new L.C { argv { \"a\" } }\n",
+    )
+    .unwrap();
+    let error = pklr::eval_to_json(&failing).unwrap_err().to_string();
+    assert!(error.contains("but its value is undefined"), "{error}");
+
+    let starred = temp.path().join("starred.pkl");
+    std::fs::write(
+        &starred,
+        "import \"lib.pkl\" as L\ns = new L.S { argv { \"a\" } }\n",
+    )
+    .unwrap();
+    assert_eq!(
+        pklr::eval_to_json(&starred).unwrap(),
+        serde_json::json!({"s": {"argv": ["a"]}})
+    );
+}
+
+#[test]
+fn imported_union_default_alternative_keeps_its_constraint() {
+    let temp = TestTempDir::new("pklr_test_imported_union_default_constraint");
+    std::fs::write(
+        temp.path().join("lib.pkl"),
+        "class Ref { path: String }\ntypealias Args = *Listing<String>(!this.isEmpty)|Ref\nclass C { argv: Args }\n",
+    )
+    .unwrap();
+    let empty = temp.path().join("empty.pkl");
+    std::fs::write(&empty, "import \"lib.pkl\" as L\nc = new L.C { argv {} }\n").unwrap();
+    assert!(pklr::eval_to_json(&empty).is_err());
+    let filled = temp.path().join("filled.pkl");
+    std::fs::write(
+        &filled,
+        "import \"lib.pkl\" as L\nc = new L.C { argv { \"a\" } }\n",
+    )
+    .unwrap();
+    assert_eq!(
+        pklr::eval_to_json(&filled).unwrap(),
+        serde_json::json!({"c": {"argv": ["a"]}})
+    );
+}
+
+#[test]
+fn imported_class_listing_new_elements_take_the_declared_element_type() {
+    let temp = TestTempDir::new("pklr_test_imported_listing_element_type");
+    let dir = temp.path();
+    std::fs::write(
+        dir.join("lib.pkl"),
+        "class Task { name: String; loopVar: String = \"item\" }\ntypealias T2 = Task\nclass Play { tasks: Listing<Task>; aliased: Listing<T2> }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.pkl"),
+        r#"import "lib.pkl" as L
+class Task { other: Int = 9 }
+p = new L.Play {
+  tasks {
+    new { name = "t" }
+    for (n in List("x")) { new { name = n } }
+  }
+  aliased { new { name = "a" } }
+}
+q = (p) { tasks { new { name = "y" } } }
+mine = new Task {}
+"#,
+    )
+    .unwrap();
+    // Matches `pkl eval -f json` 0.33.0: `Task` in `Listing<Task>` is
+    // lib.pkl's class, even though the importer declares its own `Task`.
+    let task = |name: &str| serde_json::json!({"name": name, "loopVar": "item"});
+    let json = pklr::eval_to_json(&dir.join("main.pkl")).unwrap();
+    assert_eq!(
+        json["p"]["tasks"],
+        serde_json::json!([task("t"), task("x")])
+    );
+    assert_eq!(json["p"]["aliased"], serde_json::json!([task("a")]));
+    assert_eq!(
+        json["q"]["tasks"],
+        serde_json::json!([task("t"), task("x"), task("y")])
+    );
+    assert_eq!(json["mine"], serde_json::json!({"other": 9}));
+
+    std::fs::write(
+        dir.join("wrong.pkl"),
+        "import \"lib.pkl\" as L\np = new L.Play { tasks { new { name = 5 } } }\n",
+    )
+    .unwrap();
+    let error = pklr::eval_to_json(&dir.join("wrong.pkl"))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("expected String"), "{error}");
+}
+
+#[test]
+fn imported_recursive_class_listing_new_elements_take_the_declared_element_type() {
+    let temp = TestTempDir::new("pklr_test_imported_recursive_listing_element_type");
+    let dir = temp.path();
+    std::fs::write(
+        dir.join("lib.pkl"),
+        "class Task { name: String; loopVar: String = \"item\"; block: Listing<Task>; steps: Listing<Step> }\nclass Step { id: Int = 1; sub: Listing<Task> }\nclass Play { tasks: Listing<Task> }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.pkl"),
+        r#"import "lib.pkl" as L
+p = new L.Play {
+  tasks {
+    new {
+      name = "t"
+      block { new { name = "b"; block { new { name = "c" } } } }
+      steps { new { sub { new { name = "s" } } } }
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    // Matches `pkl eval -f json` 0.33.0: a class's own name and the classes
+    // declared after it resolve inside its property types.
+    let json = pklr::eval_to_json(&dir.join("main.pkl")).unwrap();
+    let task = &json["p"]["tasks"][0];
+    assert_eq!(task["block"][0]["loopVar"], "item");
+    assert_eq!(task["block"][0]["block"][0]["loopVar"], "item");
+    assert_eq!(task["steps"][0]["id"], 1);
+    assert_eq!(task["steps"][0]["sub"][0]["loopVar"], "item");
 }
