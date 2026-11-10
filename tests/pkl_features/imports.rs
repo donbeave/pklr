@@ -3330,3 +3330,38 @@ plain = import("plain.pkl")
             .any(|reference| reference == ("plain.pkl", false))
     );
 }
+
+#[test]
+fn imported_module_value_does_not_render_its_classes() {
+    let temp = TestTempDir::new("pklr_test_imported_module_classes");
+    std::fs::write(
+        temp.path().join("lib.pkl"),
+        "class C { opt: Int = 1 }\ntypealias Alias = C\nfunction f(x) = x\nvalue = 1\n",
+    )
+    .unwrap();
+    let main = temp.path().join("main.pkl");
+    std::fs::write(
+        &main,
+        "import \"lib.pkl\" as lib\nresult = lib\nviaC = new lib.C {}\nviaAlias = new lib.Alias {}\ncalled = lib.f(2)\n",
+    )
+    .unwrap();
+    // Matches `pkl eval -f json` 0.33.0: classes are members of `lib`, so
+    // `lib.C` resolves, but they are not properties, so `lib` renders without them.
+    assert_eq!(
+        pklr::eval_to_json(&main).unwrap(),
+        serde_json::json!({
+            "result": {"value": 1},
+            "viaC": {"opt": 1},
+            "viaAlias": {"opt": 1},
+            "called": 2
+        })
+    );
+
+    let yaml = temp.path().join("yaml.pkl");
+    std::fs::write(
+        &yaml,
+        "import \"lib.pkl\" as lib\nresult = lib\noutput { renderer = new YamlRenderer {} }\n",
+    )
+    .unwrap();
+    assert_eq!(pklr::eval_to_text(&yaml).unwrap(), "result:\n  value: 1\n");
+}
