@@ -6,6 +6,9 @@ name: perf-pr
 
 on:
   pull_request:
+    # Benchmark notes exist only for main. ruxel-5.2.3, Ruxel's deployment
+    # branch, has no baseline to compare against.
+    branches: ["main"]
 
 permissions: {}
 

@@ -1,10 +1,15 @@
 name: ci
 
+# ruxel-5.2.3 is Ruxel's deployment branch: the published 5.2.3 crate plus
+# Ruxel's patches (see donbeave/pklr#11). The published crate has no reqwest
+# or package-zip feature and no integration test target, so the steps for
+# them exist only on main.
+
 on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: ["main"]
+    branches: ["main", "ruxel-5.2.3"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,18 +34,10 @@ jobs:
       - run: cargo test
       - run: cargo test --all-features
       - run: cargo test --no-default-features --features native-io
-      - run: cargo test --no-default-features --features reqwest --test reqwest
-      - name: Check that reqwest-only does not select ureq
-        run: |
-          if cargo tree --no-default-features --features reqwest | grep -q '[[:space:]]ureq v'; then
-            echo "reqwest-only unexpectedly includes ureq"
-            exit 1
-          fi
       - run: cargo clippy --all-targets --all-features -- -D warnings
       # Embedders build the evaluator without host IO, where items only those
       # features use are dead. The examples and tests need native-io.
       - run: cargo clippy --lib --no-default-features --features eval-core -- -D warnings
-      - run: cargo clippy --lib --no-default-features --features package-zip -- -D warnings
       - run: cargo fmt --check
   windows:
     runs-on: windows-latest
@@ -54,7 +51,6 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo test --all-features --lib file_uri_path_preserves_unc_authority
       - run: cargo test --all-features --test pkl_features encoded_file_uris_resolve_amends_imports_and_extends
-      - run: cargo test --all-features --test integration analyze_imports_decodes_file_uri_paths
   msrv:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -67,10 +63,6 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
       - run: cargo msrv verify
-      - name: Test the reqwest-only HTTP backend on the MSRV
-        run: |
-          rustup toolchain install 1.88.0 --profile minimal
-          cargo +1.88.0 test --no-default-features --features reqwest --test reqwest
   semver:
     runs-on: ubuntu-latest
     timeout-minutes: 10
