@@ -11,12 +11,13 @@ mod objects;
 mod types;
 mod validate;
 
+pub(crate) use ast::infers_new;
+use ast::type_expr_runtime_name;
 pub use ast::{
     Annotation, BinOp, Body, Entry, Expr, ForGenerator, Import, LocalBindings, Modifier, Module,
     Property, StringInterpPart, TraceSite, TypeExpr, UnOp, WhenGenerator,
 };
 pub(crate) use ast::{has_untyped_result_new, infer_method_return_new, rewrite_untyped_result_new};
-use ast::{infers_new, type_expr_runtime_name};
 use checks::*;
 use cursor::*;
 use decls::*;

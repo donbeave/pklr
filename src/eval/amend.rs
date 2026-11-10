@@ -879,6 +879,7 @@ impl Evaluator {
                 &amendment_scope,
                 depth + 1,
                 amended.make_mut(),
+                None,
             )?;
             return Ok(Value::List(amended));
         }

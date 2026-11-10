@@ -87,7 +87,14 @@ impl Evaluator {
                 amendment_scope.set("super", Value::List(items.clone()));
                 amendment_scope.receiver_entries = Some(body.clone());
                 amendment_scope.receiver_list_base = Some(items.len());
-                self.eval_listing_entries(body, &amendment_scope, depth, items.make_mut())?;
+                let element_type = prop.type_ann.as_ref().and_then(listing_element_type);
+                self.eval_listing_entries(
+                    body,
+                    &amendment_scope,
+                    depth,
+                    items.make_mut(),
+                    element_type,
+                )?;
                 return Ok(Some(Value::List(items)));
             }
             // `foo { ... }` — object body amendment.
