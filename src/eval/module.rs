@@ -644,6 +644,7 @@ impl Evaluator {
                 values: scope.flatten(),
                 type_aliases: scope.flatten_type_aliases(),
                 module_identities: scope.flatten_module_identities(),
+                type_namespace: scope.type_namespace.clone(),
                 late_properties: effective_late_properties.into_values().collect(),
             },
         );

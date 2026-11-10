@@ -3588,3 +3588,37 @@ mine = new Task {}
         .to_string();
     assert!(error.contains("expected String"), "{error}");
 }
+
+#[test]
+fn imported_recursive_class_listing_new_elements_take_the_declared_element_type() {
+    let temp = TestTempDir::new("pklr_test_imported_recursive_listing_element_type");
+    let dir = temp.path();
+    std::fs::write(
+        dir.join("lib.pkl"),
+        "class Task { name: String; loopVar: String = \"item\"; block: Listing<Task>; steps: Listing<Step> }\nclass Step { id: Int = 1; sub: Listing<Task> }\nclass Play { tasks: Listing<Task> }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.pkl"),
+        r#"import "lib.pkl" as L
+p = new L.Play {
+  tasks {
+    new {
+      name = "t"
+      block { new { name = "b"; block { new { name = "c" } } } }
+      steps { new { sub { new { name = "s" } } } }
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    // Matches `pkl eval -f json` 0.33.0: a class's own name and the classes
+    // declared after it resolve inside its property types.
+    let json = pklr::eval_to_json(&dir.join("main.pkl")).unwrap();
+    let task = &json["p"]["tasks"][0];
+    assert_eq!(task["block"][0]["loopVar"], "item");
+    assert_eq!(task["block"][0]["block"][0]["loopVar"], "item");
+    assert_eq!(task["steps"][0]["id"], 1);
+    assert_eq!(task["steps"][0]["sub"][0]["loopVar"], "item");
+}

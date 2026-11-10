@@ -49,7 +49,22 @@ impl Evaluator {
                 }
             }
             let mut parts = type_name.split('.');
-            let mut value = source.scope().get(parts.next()?)?.clone();
+            let head = parts.next()?;
+            // A class's captured scope lacks the classes declared with or
+            // after it (`block: Listing<Task>` inside `Task`); those are in
+            // its module's final scope.
+            let mut value = source
+                .scope()
+                .get(head)
+                .or_else(|| {
+                    let (namespace, _) = source.type_identity.as_deref()?.rsplit_once('.')?;
+                    self.module_scopes
+                        .values()
+                        .find(|module| module.type_namespace.as_deref() == Some(namespace))?
+                        .values
+                        .get(head)
+                })?
+                .clone();
             for part in parts {
                 let Value::Object(map, _) = &value else {
                     return None;
