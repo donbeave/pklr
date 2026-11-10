@@ -64,6 +64,11 @@ impl Evaluator {
 }
 
 impl Evaluator {
+    /// See [`crate::EvaluatorBuilder::max_depth`].
+    pub fn set_max_depth(&mut self, depth: usize) {
+        self.max_depth = depth;
+    }
+
     /// Construct an evaluator with the native host capabilities.
     #[cfg(feature = "native-io")]
     pub fn new() -> Self {
