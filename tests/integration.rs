@@ -1801,3 +1801,52 @@ fn test_outer_before_single_builtin() {
     }
     assert!(result.is_ok());
 }
+
+/// A module source that serves only the root module and refuses every other
+/// local module, as an embedder confining imports would.
+struct RootOnly;
+impl pklr::ModuleSource for RootOnly {
+    fn identity(&mut self, path: &std::path::Path) -> pklr::Result<std::path::PathBuf> {
+        if path == std::path::Path::new("workflow.pkl") {
+            Ok(path.into())
+        } else {
+            Err(pklr::Error::Eval(format!("refused {}", path.display())))
+        }
+    }
+    fn exists(&mut self, path: &std::path::Path) -> pklr::Result<bool> {
+        Err(pklr::Error::Eval(format!("refused {}", path.display())))
+    }
+    fn read(&mut self, path: &std::path::Path) -> pklr::Result<String> {
+        Err(pklr::Error::Eval(format!("refused {}", path.display())))
+    }
+}
+
+#[test]
+fn module_source_does_not_see_extracted_package_modules() {
+    let mut evaluator = pklr::Evaluator::new();
+    let cache_dir = std::env::temp_dir().join(format!(
+        "pklr-module-source-package-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    evaluator.set_package_cache_dir(&cache_dir);
+    evaluator
+        .preload_package(
+            "https://github.com/apple/pkl-pantry/releases/download/com.github.actions@1.9.0/com.github.actions@1.9.0.zip",
+            "zip",
+            include_bytes!("fixtures/com.github.actions-1.9.0.zip"),
+        )
+        .unwrap();
+    evaluator.set_offline(true);
+    evaluator.set_module_source(RootOnly);
+    // Package modules are extracted through the capabilities, so a module
+    // source that refuses local modules must not be asked about them.
+    let source = r#"
+amends "package://pkg.pkl-lang.org/pkl-pantry/com.github.actions@1.9.0#/Workflow.pkl"
+jobs { ["build"] { `runs-on` = "ubuntu-latest"; steps { new { run = "echo hello" } } } }
+"#;
+    let value = evaluator
+        .eval_source(source, std::path::Path::new("workflow.pkl"))
+        .unwrap();
+    assert_eq!(value.to_json()["jobs"]["build"]["runs-on"], "ubuntu-latest");
+}
