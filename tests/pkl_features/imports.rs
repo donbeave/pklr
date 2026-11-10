@@ -3267,3 +3267,54 @@ fn late_binding_reaches_through_a_long_chain_of_outer_reads() {
 
     assert_eq!(eval_chain(dir.join("main.pkl"))["res"], 12);
 }
+
+#[test]
+fn imported_class_listing_new_elements_take_the_declared_element_type() {
+    let temp = TestTempDir::new("pklr_test_imported_listing_element_type");
+    let dir = temp.path();
+    std::fs::write(
+        dir.join("lib.pkl"),
+        "class Task { name: String; loopVar: String = \"item\" }\ntypealias T2 = Task\nclass Play { tasks: Listing<Task>; aliased: Listing<T2> }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.pkl"),
+        r#"import "lib.pkl" as L
+class Task { other: Int = 9 }
+p = new L.Play {
+  tasks {
+    new { name = "t" }
+    for (n in List("x")) { new { name = n } }
+  }
+  aliased { new { name = "a" } }
+}
+q = (p) { tasks { new { name = "y" } } }
+mine = new Task {}
+"#,
+    )
+    .unwrap();
+    // Matches `pkl eval -f json` 0.33.0: `Task` in `Listing<Task>` is
+    // lib.pkl's class, even though the importer declares its own `Task`.
+    let task = |name: &str| serde_json::json!({"name": name, "loopVar": "item"});
+    let json = pklr::eval_to_json(&dir.join("main.pkl")).unwrap();
+    assert_eq!(
+        json["p"]["tasks"],
+        serde_json::json!([task("t"), task("x")])
+    );
+    assert_eq!(json["p"]["aliased"], serde_json::json!([task("a")]));
+    assert_eq!(
+        json["q"]["tasks"],
+        serde_json::json!([task("t"), task("x"), task("y")])
+    );
+    assert_eq!(json["mine"], serde_json::json!({"other": 9}));
+
+    std::fs::write(
+        dir.join("wrong.pkl"),
+        "import \"lib.pkl\" as L\np = new L.Play { tasks { new { name = 5 } } }\n",
+    )
+    .unwrap();
+    let error = pklr::eval_to_json(&dir.join("wrong.pkl"))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("expected String"), "{error}");
+}
