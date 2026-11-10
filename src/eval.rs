@@ -214,6 +214,8 @@ struct ModuleScopeSnapshot {
     values: ScopeMap,
     type_aliases: TypeAliasMap,
     module_identities: IndexMap<String, String>,
+    /// The prefix of the type identities of the classes this module declares.
+    type_namespace: Option<String>,
     late_properties: Vec<Arc<Property>>,
 }
 
