@@ -94,6 +94,7 @@ pub struct EvaluatorBuilder {
     external_properties: std::collections::BTreeMap<String, String>,
     preloaded_packages: Vec<PreloadedPackage>,
     module_path: Vec<eval::ModulePathEntry>,
+    max_depth: Option<usize>,
 }
 
 /// Package content a host supplies up front instead of fetching it.
@@ -206,6 +207,15 @@ impl EvaluatorBuilder {
         self
     }
 
+    /// The deepest expression nesting the evaluator follows before it reports
+    /// "maximum recursion depth exceeded". The default is 32. Official Pkl has
+    /// no such limit; raise it for configuration built on libraries. Each
+    /// level is a native stack frame, so keep the host thread's stack in mind.
+    pub fn max_depth(mut self, depth: usize) -> Self {
+        self.max_depth = Some(depth);
+        self
+    }
+
     /// Append a module compiled into the host to the module path, at the
     /// absolute namespace path `path` (imported as `modulepath:{path}`).
     /// Entries are searched in order.
@@ -268,6 +278,9 @@ impl EvaluatorBuilder {
         }
         evaluator.set_external_properties(self.external_properties);
         evaluator.set_module_path(self.module_path);
+        if let Some(depth) = self.max_depth {
+            evaluator.set_max_depth(depth);
+        }
         for package in &self.preloaded_packages {
             let _ = evaluator.preload_package(&package.url, &package.extension, &package.bytes);
         }

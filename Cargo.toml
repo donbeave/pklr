@@ -79,5 +79,9 @@ required-features = ["async", "package-zip"]
 name = "reqwest"
 required-features = ["reqwest"]
 
+[[test]]
+name = "max_depth"
+required-features = ["native-io"]
+
 [profile.dev]
 debug = 1
