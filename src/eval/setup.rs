@@ -10,9 +10,27 @@ impl Evaluator {
         self.module_source = Some(Box::new(source));
     }
 
+    /// Whether `path` lies in a package this evaluator extracted. Those files
+    /// were created through the capabilities, not the host's local-module
+    /// namespace, so a module source never sees them.
+    fn in_extracted_package(&self, path: &Path) -> bool {
+        #[cfg(feature = "package-zip")]
+        {
+            self.package_dirs.values().any(|dir| path.starts_with(dir))
+        }
+        #[cfg(not(feature = "package-zip"))]
+        {
+            let _ = path;
+            false
+        }
+    }
+
     pub(super) fn module_identity_io(&mut self, path: &Path) -> Result<PathBuf> {
         if let Some(path) = module_path::namespace_path(path) {
             return module_path::identity(path);
+        }
+        if self.in_extracted_package(path) {
+            return self.capabilities.canonicalize(path);
         }
         let result = match self.module_source.as_mut() {
             Some(source) => source.identity(path),
@@ -25,6 +43,9 @@ impl Evaluator {
         if let Some(path) = module_path::namespace_path(path) {
             return self.module_path_exists(path);
         }
+        if self.in_extracted_package(path) {
+            return self.capabilities.path_exists(path);
+        }
         let result = match self.module_source.as_mut() {
             Some(source) => source.exists(path),
             None => return self.capabilities.path_exists(path),
@@ -36,6 +57,9 @@ impl Evaluator {
         self.check_cancelled()?;
         if let Some(path) = module_path::namespace_path(path) {
             return self.module_path_read(path);
+        }
+        if self.in_extracted_package(path) {
+            return self.capabilities.read_to_string(path);
         }
         let result = match self.module_source.as_mut() {
             Some(source) => source.read(path),
