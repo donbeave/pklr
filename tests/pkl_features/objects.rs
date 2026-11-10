@@ -5344,3 +5344,51 @@ m: Mapping<String, R | Listing<Int>> = new {
     );
     assert_eq!(result["m"]["l"], serde_json::json!([1, 2]));
 }
+
+#[test]
+fn amending_union_property_without_default_fails() {
+    // Matches `pkl eval` 0.33.0: a union has no default unless one
+    // alternative is marked `*`, so the body amends an undefined value.
+    for source in [
+        r#"
+class Ref { path: String }
+class C { argv: Listing<String>|Ref }
+c = new C { argv { "a" } }
+"#,
+        r#"
+class Ref { path: String }
+typealias Args = Listing<String>|Ref
+class C { argv: Args }
+c = new C { argv { "a" } }
+"#,
+        r#"
+class Ref { path: String }
+class C { r: Ref|Listing<String> }
+c = new C { r { path = "x" } }
+"#,
+    ] {
+        let error = eval_fails(source);
+        assert!(
+            error.contains("but its value is undefined"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
+fn amending_union_property_with_default_or_value_succeeds() {
+    let result = eval(
+        r#"
+class Ref { path: String }
+class Starred { argv: *Listing<String>|Ref }
+class Valued { argv: Listing<String>|Ref = new Listing { "z" } }
+class Plain { argv: Listing<String>|Ref }
+starred = new Starred { argv { "a" } }
+valued = new Valued { argv { "a" } }
+assigned = new Plain { argv = new Ref { path = "p" } }
+"#,
+    );
+    assert_eq!(result["starred"]["argv"], serde_json::json!(["a"]));
+    assert_eq!(result["valued"]["argv"], serde_json::json!(["z", "a"]));
+    assert_eq!(result["assigned"]["argv"]["path"], "p");
+}
