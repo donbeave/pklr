@@ -230,32 +230,38 @@ fn eval_to_json_refuses_what_json_renderer_refuses() {
 
 #[cfg(feature = "native-io")]
 #[test]
-fn eval_to_json_omits_nulls_only_when_renderer_asks() {
-    let (_dir, path) = module_file("pklr_render_json_nulls", "a = null\nb = 1\n");
+fn eval_to_json_omits_nulls_unless_renderer_keeps_them() {
+    // `pkl eval -f json` 0.33.0: `JsonRenderer.omitNullProperties` defaults to
+    // true. Null properties and mapping entries are omitted, list elements
+    // are kept.
+    let (_dir, path) = module_file(
+        "pklr_render_json_nulls",
+        "a = null\nb = 1\nm = new Mapping { [\"k\"] = null; [\"j\"] = 1 }\nl = new Listing { null; 1 }\n",
+    );
+    assert_eq!(
+        pklr::eval_to_json(&path).unwrap(),
+        serde_json::json!({"b": 1, "m": {"j": 1}, "l": [null, 1]})
+    );
+    let (_dir, path) = module_file(
+        "pklr_render_json_keep_nulls",
+        "a = null\nb = 1\noutput { renderer = new JsonRenderer { omitNullProperties = false } }\n",
+    );
     assert_eq!(
         pklr::eval_to_json(&path).unwrap(),
         serde_json::json!({"a": null, "b": 1})
-    );
-    let (_dir, path) = module_file(
-        "pklr_render_json_omit_nulls",
-        "a = null\nb = 1\noutput { renderer = new JsonRenderer { omitNullProperties = true } }\n",
-    );
-    assert_eq!(
-        pklr::eval_to_json(&path).unwrap(),
-        serde_json::json!({"b": 1})
     );
 }
 
 #[cfg(feature = "native-io")]
 #[test]
-fn output_renderer_defaults_keep_nulls_when_only_converters_are_set() {
+fn output_renderer_defaults_omit_nulls_when_only_converters_are_set() {
     let (_dir, path) = module_file(
         "pklr_render_converter_keeps_nulls",
         "a = null\nb = 1\noutput { renderer = new JsonRenderer { converters { [Int] = (n) -> n + 1 } } }\n",
     );
     assert_eq!(
         pklr::eval_to_json(&path).unwrap(),
-        serde_json::json!({"a": null, "b": 2})
+        serde_json::json!({"b": 2})
     );
 }
 
