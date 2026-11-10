@@ -69,11 +69,6 @@ impl Evaluator {
     }
 
     pub(super) fn module_glob_io(&mut self, base: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
-        if module_path::namespace_path(base).is_some() || pattern.starts_with(module_path::SCHEME) {
-            return Err(Error::Unsupported(
-                "glob imports are unavailable in the module path".into(),
-            ));
-        }
         if self.module_source.is_some() {
             return self.record_module_result(Err(Error::Eval(
                 "module globs are unavailable with a module source namespace".into(),

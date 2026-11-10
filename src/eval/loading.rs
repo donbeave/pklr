@@ -22,12 +22,8 @@ impl Evaluator {
             return module_path::identity(path);
         }
         if let Some(base) = module_path::namespace_path(current_path) {
-            if parse_triple_dot_path(uri)?.is_some() {
-                return Err(Error::Unsupported(
-                    "triple-dot imports are unavailable in the module path".into(),
-                ));
-            }
-            return module_path::resolve_relative(base, uri);
+            let base = base.to_owned();
+            return self.resolve_module_path_relative(&base, uri);
         }
         if let Some(triple_dot) = parse_triple_dot_path(uri)? {
             return Ok(self
@@ -466,6 +462,20 @@ impl Evaluator {
         depth: usize,
         requested: Option<&HashSet<Name>>,
     ) -> Result<Value> {
+        // Pkl does not consider `modulepath:` globbable.
+        let module_path_pattern = match module_path::namespace_path(path) {
+            Some(base) if !uri.starts_with("file:") && !uri.contains("://") => {
+                Some(module_path::resolve_relative(base, uri)?)
+            }
+            _ if uri.starts_with(module_path::SCHEME) => Some(PathBuf::from(uri)),
+            _ => None,
+        };
+        if let Some(pattern) = module_path_pattern {
+            return Err(Error::Eval(format!(
+                "Cannot expand glob pattern `{}` because scheme `modulepath` is not globbable.",
+                pattern.display()
+            )));
+        }
         // Non-local glob imports resolve to an empty mapping.
         if uri.contains("://") {
             return Ok(Value::Object(Arc::default(), None));
