@@ -5344,3 +5344,79 @@ m: Mapping<String, R | Listing<Int>> = new {
     );
     assert_eq!(result["m"]["l"], serde_json::json!([1, 2]));
 }
+
+#[test]
+fn typed_listing_new_element_takes_the_element_type() {
+    let result = eval(
+        r#"
+class Task { name: String; loopVar: String = "item" }
+class Play { tasks: Listing<Task> }
+p = new Play { tasks { new { name = "t" } } }
+"#,
+    );
+    assert_eq!(
+        result["p"]["tasks"],
+        serde_json::json!([{"name": "t", "loopVar": "item"}])
+    );
+}
+
+#[test]
+fn typed_listing_new_element_is_checked_against_the_element_type() {
+    let header = r#"
+class Task { name: String; loopVar: String = "item" }
+class Play { tasks: Listing<Task> }
+"#;
+    let error = eval_fails(&format!(
+        "{header}p = new Play {{ tasks {{ new {{ name = 5 }} }} }}"
+    ));
+    assert!(error.contains("expected String"), "{error}");
+    let error = eval_fails(&format!(
+        "{header}p = new Play {{ tasks {{ new {{ nme = \"t\" }} }} }}"
+    ));
+    assert!(error.contains("nme"), "{error}");
+}
+
+#[test]
+fn typed_listing_new_element_in_every_listing_form() {
+    let result = eval(
+        r#"
+class Task { name: String; loopVar: String = "item" }
+class Play { tasks: Listing<Task> }
+class Optional { tasks: Listing<Task>? }
+declared: Listing<Task> = new { new { name = "a" } }
+constructed = new Listing<Task> { new { name = "b" } }
+generated = new Play {
+  tasks {
+    for (n in List("c", "d")) { new { name = n } }
+    when (true) { new { name = "e" } }
+  }
+}
+nullable = new Optional { tasks { new { name = "f" } } }
+amended = (generated) { tasks { new { name = "g" } } }
+"#,
+    );
+    let task = |name: &str| serde_json::json!({"name": name, "loopVar": "item"});
+    assert_eq!(result["declared"], serde_json::json!([task("a")]));
+    assert_eq!(result["constructed"], serde_json::json!([task("b")]));
+    assert_eq!(
+        result["generated"]["tasks"],
+        serde_json::json!([task("c"), task("d"), task("e")])
+    );
+    assert_eq!(result["nullable"]["tasks"], serde_json::json!([task("f")]));
+    assert_eq!(
+        result["amended"]["tasks"],
+        serde_json::json!([task("c"), task("d"), task("e"), task("g")])
+    );
+}
+
+#[test]
+fn typed_listing_new_element_with_builtin_or_union_type_stays_untyped() {
+    let result = eval(
+        r#"
+d: Listing<Dynamic> = new { new { a = 1 } }
+u: Listing<Int|String> = new { 1; "x" }
+"#,
+    );
+    assert_eq!(result["d"], serde_json::json!([{"a": 1}]));
+    assert_eq!(result["u"], serde_json::json!([1, "x"]));
+}

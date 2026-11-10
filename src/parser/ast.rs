@@ -137,7 +137,7 @@ pub(super) fn type_expr_runtime_name(ty: &TypeExpr) -> String {
 /// Whether `new { ... }` assigned to a property declared `ty` should build
 /// `ty`: a Mapping or Listing (with or without type arguments), possibly
 /// nullable or constrained, or a class or alias name resolved at evaluation.
-pub(super) fn infers_new(ty: &TypeExpr) -> bool {
+pub(crate) fn infers_new(ty: &TypeExpr) -> bool {
     match ty {
         TypeExpr::Generic(name, _) => matches!(name.as_str(), "Mapping" | "Listing"),
         TypeExpr::Nullable(inner) => infers_new(inner),

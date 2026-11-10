@@ -142,7 +142,13 @@ impl Evaluator {
                     );
                     listing_scope.receiver_list_base = Some(0);
                     let mut items = Vec::new();
-                    this.eval_listing_entries(entries, &listing_scope, depth + 1, &mut items)?;
+                    this.eval_listing_entries(
+                        entries,
+                        &listing_scope,
+                        depth + 1,
+                        &mut items,
+                        None,
+                    )?;
                     Ok(items)
                 };
                 match type_name.as_deref() {
@@ -169,7 +175,20 @@ impl Evaluator {
                         );
                         listing_scope.receiver_list_base = Some(0);
                         let mut items = Vec::new();
-                        self.eval_listing_entries(entries, &listing_scope, depth + 1, &mut items)?;
+                        // `new Listing<T> { new { ... } }` builds a `T`.
+                        let element_type = match generic_params.as_slice() {
+                            [element] => crate::parser::parse_type_name(element).ok(),
+                            _ => None,
+                        };
+                        self.eval_listing_entries(
+                            entries,
+                            &listing_scope,
+                            depth + 1,
+                            &mut items,
+                            element_type.as_ref().and_then(|element| {
+                                crate::parser::infers_new(element).then_some(element)
+                            }),
+                        )?;
                         Ok(Value::List(ListValue::new(ListKind::Listing, items)))
                     }
                     Some("Mapping") => {
