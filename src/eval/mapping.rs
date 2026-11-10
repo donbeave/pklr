@@ -407,9 +407,12 @@ pub(super) fn apply_mapping_type_annotation(
 /// The source of a mapping known only by its type: no entries to rebuild it
 /// from, just its kind.
 /// Bind the classes a `Mapping` value type names, resolved where the type is
-/// declared, into the mapping's captured scope. Its entries are evaluated
-/// later, possibly in another module that cannot resolve those names, as
-/// when an imported class declares `nodes: Mapping<String, Node>`.
+/// declared, into the captured scope of a typed property's default mapping.
+/// That default captures no bindings of its own, and its entries are
+/// evaluated later, possibly in another module that cannot resolve those
+/// names, as when an imported class declares `nodes: Mapping<String, Node>`.
+/// A declared value (`x: Mapping<String, T> = new { ... }`) already captures
+/// the scope it is written in.
 pub(super) fn capture_mapping_value_types(value: &mut Value, scope: &Scope) {
     let Value::Object(_, Some(src)) = value else {
         return;
