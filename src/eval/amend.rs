@@ -198,6 +198,24 @@ impl Evaluator {
             if let Entry::Property(prop) = entry
                 && let Some(replacement) = overlay_by_name.get(prop.name.as_ref())
             {
+                // A union type has no default unless one alternative is marked
+                // `*`. Resolve the class's aliases here, where they are in
+                // scope; the amending module may not see them.
+                if let Entry::Property(overlay_prop) = replacement
+                    && overlay_prop.body.is_some()
+                    && overlay_prop.value.is_none()
+                    && prop.value.is_none()
+                    && prop.body.is_none()
+                    && let Some(ty) = &prop.type_ann
+                    && let crate::parser::TypeExpr::Union(variants) =
+                        resolve_type_alias_in(ty, base_source.scope_type_aliases())
+                    && !variants.iter().any(is_default_type)
+                {
+                    return Err(Error::Eval(format!(
+                        "Tried to read property `{}` but its value is undefined.",
+                        prop.name
+                    )));
+                }
                 if let Entry::Property(overlay_prop) = replacement
                     && overlay_prop.body.is_some()
                     && overlay_prop.value.is_none()

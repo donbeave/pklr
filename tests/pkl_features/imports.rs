@@ -3482,3 +3482,34 @@ mine = new Node {}
         })
     );
 }
+
+#[test]
+fn amending_imported_union_alias_property_without_default_fails() {
+    let temp = TestTempDir::new("pklr_test_imported_union_alias");
+    std::fs::write(
+        temp.path().join("lib.pkl"),
+        "class Ref { path: String }\ntypealias Args = Listing<String>|Ref\ntypealias Starred = *Listing<String>|Ref\nclass C { argv: Args }\nclass S { argv: Starred }\n",
+    )
+    .unwrap();
+    // The alias is declared in lib.pkl, which the amending module does not
+    // see by name. `pkl eval` 0.33.0 still rejects the amendment.
+    let failing = temp.path().join("failing.pkl");
+    std::fs::write(
+        &failing,
+        "import \"lib.pkl\" as L\nc = new L.C { argv { \"a\" } }\n",
+    )
+    .unwrap();
+    let error = pklr::eval_to_json(&failing).unwrap_err().to_string();
+    assert!(error.contains("but its value is undefined"), "{error}");
+
+    let starred = temp.path().join("starred.pkl");
+    std::fs::write(
+        &starred,
+        "import \"lib.pkl\" as L\ns = new L.S { argv { \"a\" } }\n",
+    )
+    .unwrap();
+    assert_eq!(
+        pklr::eval_to_json(&starred).unwrap(),
+        serde_json::json!({"s": {"argv": ["a"]}})
+    );
+}

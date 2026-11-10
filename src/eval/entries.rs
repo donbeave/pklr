@@ -54,6 +54,21 @@ impl Evaluator {
                 .filter(|value| !is_null_value(value))
                 .or(nullable_default.as_ref())
                 .or(scoped);
+            // A union type has no default unless one alternative is marked
+            // `*`, so a body amending an unset property of that type amends
+            // an undefined value.
+            if amendment_base.is_none()
+                && let Some(crate::parser::TypeExpr::Union(variants)) = prop
+                    .type_ann
+                    .as_ref()
+                    .map(|ty| resolve_type_alias(ty, scope))
+                && !variants.iter().any(is_default_type)
+            {
+                return Err(Error::Eval(format!(
+                    "Tried to read property `{}` but its value is undefined.",
+                    prop.name
+                )));
+            }
             if let Some(Value::List(items)) = amendment_base
                 && matches!(items.kind(), ListKind::List | ListKind::Set)
             {

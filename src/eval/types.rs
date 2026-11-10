@@ -828,6 +828,40 @@ pub(super) fn string_literal_type_value(name: &str) -> Option<&str> {
         .strip_suffix('"')
 }
 
+/// `ty` with type aliases visible in `scope` followed to what they name.
+pub(super) fn resolve_type_alias<'a>(
+    ty: &'a crate::parser::TypeExpr,
+    scope: &'a Scope,
+) -> &'a crate::parser::TypeExpr {
+    follow_type_aliases(ty, |name| scope.get_type_alias(name))
+}
+
+/// `ty` with the aliases in `aliases`, a captured scope's, followed.
+pub(super) fn resolve_type_alias_in<'a>(
+    ty: &'a crate::parser::TypeExpr,
+    aliases: &'a TypeAliasMap,
+) -> &'a crate::parser::TypeExpr {
+    follow_type_aliases(ty, |name| aliases.get(name).map(|ty| &**ty))
+}
+
+fn follow_type_aliases<'a>(
+    mut ty: &'a crate::parser::TypeExpr,
+    get: impl Fn(&str) -> Option<&'a crate::parser::TypeExpr>,
+) -> &'a crate::parser::TypeExpr {
+    // Alias cycles are rejected where aliases are declared; the bound only
+    // guards against looping on one that slipped through.
+    for _ in 0..32 {
+        let crate::parser::TypeExpr::Named(name) = ty else {
+            break;
+        };
+        let Some(aliased) = get(name) else {
+            break;
+        };
+        ty = aliased;
+    }
+    ty
+}
+
 pub(super) fn is_default_type(ty: &crate::parser::TypeExpr) -> bool {
     matches!(ty, crate::parser::TypeExpr::Named(name) if name.starts_with('*'))
 }
