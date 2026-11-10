@@ -196,6 +196,13 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Mark `ty` as its union's default alternative. A constrained alternative
+/// keeps its constraint, which the default value must satisfy too.
 pub(super) fn mark_default_type(ty: TypeExpr) -> TypeExpr {
-    TypeExpr::Named(format!("*{}", type_expr_runtime_name(&ty)))
+    match ty {
+        TypeExpr::Constrained(base, constraint) => {
+            TypeExpr::Constrained(format!("*{base}"), constraint)
+        }
+        ty => TypeExpr::Named(format!("*{}", type_expr_runtime_name(&ty))),
+    }
 }

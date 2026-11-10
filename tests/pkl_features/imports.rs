@@ -3267,3 +3267,26 @@ fn late_binding_reaches_through_a_long_chain_of_outer_reads() {
 
     assert_eq!(eval_chain(dir.join("main.pkl"))["res"], 12);
 }
+
+#[test]
+fn imported_union_default_alternative_keeps_its_constraint() {
+    let temp = TestTempDir::new("pklr_test_imported_union_default_constraint");
+    std::fs::write(
+        temp.path().join("lib.pkl"),
+        "class Ref { path: String }\ntypealias Args = *Listing<String>(!this.isEmpty)|Ref\nclass C { argv: Args }\n",
+    )
+    .unwrap();
+    let empty = temp.path().join("empty.pkl");
+    std::fs::write(&empty, "import \"lib.pkl\" as L\nc = new L.C { argv {} }\n").unwrap();
+    assert!(pklr::eval_to_json(&empty).is_err());
+    let filled = temp.path().join("filled.pkl");
+    std::fs::write(
+        &filled,
+        "import \"lib.pkl\" as L\nc = new L.C { argv { \"a\" } }\n",
+    )
+    .unwrap();
+    assert_eq!(
+        pklr::eval_to_json(&filled).unwrap(),
+        serde_json::json!({"c": {"argv": ["a"]}})
+    );
+}

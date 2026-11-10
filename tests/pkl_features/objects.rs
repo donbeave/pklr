@@ -5344,3 +5344,33 @@ m: Mapping<String, R | Listing<Int>> = new {
     );
     assert_eq!(result["m"]["l"], serde_json::json!([1, 2]));
 }
+
+#[test]
+fn union_default_alternative_keeps_its_constraint() {
+    // Matches `pkl eval` 0.33.0: the `*` default must satisfy the
+    // alternative's constraint, and so must values of that alternative.
+    for source in [
+        "class C { argv: *Listing<String>(!this.isEmpty)|Int }\nc = new C {}\n",
+        "class C { argv: *Listing<String>(!this.isEmpty)|Int }\nc = new C { argv = new Listing {} }\n",
+        "class C { argv: *Listing<String>(!this.isEmpty)|Int }\nc = new C { argv {} }\n",
+        "typealias Args = *Listing<String>(!this.isEmpty)|Int\nclass C { argv: Args }\nc = new C {}\n",
+    ] {
+        let error = eval_fails(source);
+        assert!(error.contains("argv"), "{source}: {error}");
+    }
+    let result = eval(
+        r#"
+class C { argv: *Listing<String>(!this.isEmpty)|Int }
+class N { n: *Int(this > 0)|String = 5 }
+class M { m: *Mapping<String, Int>(!this.isEmpty)|Int }
+amended = new C { argv { "x" } }
+other = new C { argv = 3 }
+defaulted = new N {}
+mapping = new M { m { ["a"] = 1 } }
+"#,
+    );
+    assert_eq!(result["amended"]["argv"], serde_json::json!(["x"]));
+    assert_eq!(result["other"]["argv"], 3);
+    assert_eq!(result["defaulted"]["n"], 5);
+    assert_eq!(result["mapping"]["m"]["a"], 1);
+}
