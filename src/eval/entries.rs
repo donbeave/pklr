@@ -444,6 +444,7 @@ impl Evaluator {
             kind: ObjectKind::Object,
             is_parsed_json: false,
             prototype: None,
+            type_members: Default::default(),
         };
         Ok(Value::Object(Arc::new(st.map), Some(Arc::new(source))))
     }
@@ -1150,6 +1151,7 @@ impl Evaluator {
                         kind: ObjectKind::Object,
                         is_parsed_json: false,
                         prototype: None,
+                        type_members: Default::default(),
                     },
                 };
                 *result_src = Some(std::sync::Arc::new(new_src));
