@@ -54,6 +54,9 @@ impl Evaluator {
                 }
                 Err(error) => Err(error),
             },
+            Target::ModulePath(uri) => Ok(self
+                .module_path_read_bytes(&uri[module_path::SCHEME.len()..])?
+                .map(|bytes| resource_value(&uri, &bytes))),
             Target::Unreadable => Ok(None),
         };
         if let Some(value) = value? {
@@ -105,9 +108,15 @@ impl Evaluator {
                 uri: normalized,
             });
         }
-        let absolute = match uri_scheme(uri) {
-            Some(_) => uri.to_string(),
-            None => match resolve_remote_relative(module, uri) {
+        let module_path_base = module_path::namespace_path(module).map(str::to_owned);
+        let absolute = match (uri_scheme(uri), module_path_base) {
+            (Some(_), _) => uri.to_string(),
+            // A relative resource inside a `modulepath:` module stays in the module path.
+            (None, Some(base)) => self
+                .resolve_module_path_relative(&base, uri)?
+                .display()
+                .to_string(),
+            (None, None) => match resolve_remote_relative(module, uri) {
                 Some(remote) => remote,
                 None => {
                     // When no file URI can possibly be allowed, fail before
@@ -130,6 +139,10 @@ impl Evaluator {
                 }
             },
         };
+        let absolute = match absolute.strip_prefix(module_path::SCHEME) {
+            Some(path) => module_path::identity(path)?.display().to_string(),
+            None => absolute,
+        };
         self.check_resource_allowed(&absolute)?;
         let scheme = uri_scheme(&absolute).unwrap_or_default();
         let value = &absolute[scheme.len() + 1..];
@@ -140,6 +153,7 @@ impl Evaluator {
                 path: file_uri_path(&absolute)?,
                 uri: absolute,
             },
+            "modulepath" => Target::ModulePath(absolute),
             "http" | "https" | "package" => Target::Remote(absolute),
             _ => Target::Unreadable,
         })
@@ -312,6 +326,7 @@ enum Target {
     Prop(String),
     File { path: PathBuf, uri: String },
     Remote(String),
+    ModulePath(String),
     Unreadable,
 }
 
@@ -320,7 +335,7 @@ impl Target {
         match self {
             Self::Env(name) => format!("env:{name}"),
             Self::Prop(name) => format!("prop:{name}"),
-            Self::File { uri, .. } | Self::Remote(uri) => uri.clone(),
+            Self::File { uri, .. } | Self::Remote(uri) | Self::ModulePath(uri) => uri.clone(),
             Self::Unreadable => "unreadable:".to_string(),
         }
     }

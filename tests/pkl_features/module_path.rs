@@ -106,18 +106,75 @@ fn missing_module_path_modules_are_reported_by_uri() {
     assert!(error.contains("modulepath:/acme/Missing.pkl"), "{error}");
 }
 
+// Expected results in this file were produced by `pkl eval --module-path`
+// (Pkl 0.32.2) on the same modules.
+
 #[test]
-fn module_path_uris_cannot_escape_the_namespace() {
+fn module_path_uris_that_climb_above_the_root_name_no_module() {
     let builder = EvaluatorBuilder::new()
-        .module_path_source("/Top.pkl", "import \"../Out.pkl\"\nx = Out.y\n");
+        .module_path_source("/Top.pkl", "import \"../Out.pkl\"\nx = Out.y\n")
+        .module_path_source("/Out.pkl", "y = 1\n");
     let error = eval_with(builder, "import \"modulepath:/Top.pkl\" as T\nx = T.x\n").unwrap_err();
-    assert!(error.contains("escapes the module path"), "{error}");
-    let error = eval_with(
-        EvaluatorBuilder::new(),
-        "import \"modulepath:relative.pkl\" as R\nx = R.y\n",
+    assert!(error.contains("modulepath:/../Out.pkl"), "{error}");
+}
+
+#[test]
+fn triple_dot_imports_search_the_module_path_namespace() {
+    let builder = EvaluatorBuilder::new()
+        .module_path_source("/Top.pkl", "name = \"root\"\n")
+        .module_path_source("/acme/sub/Top.pkl", "name = \"sub\"\n")
+        .module_path_source(
+            "/acme/sub/Deep.pkl",
+            "import \".../Top.pkl\"\nn = Top.name\n",
+        );
+    let json = eval_with(
+        builder,
+        "import \"modulepath:/acme/sub/Deep.pkl\" as D\nr = D.n\n",
     )
-    .unwrap_err();
-    assert!(error.contains("must be absolute"), "{error}");
+    .unwrap();
+    assert_eq!(json["r"], "root");
+}
+
+#[test]
+fn module_path_resources_are_readable_absolutely_and_relatively() {
+    let builder = EvaluatorBuilder::new()
+        .module_path_source("/acme/data.txt", "hello\n")
+        .module_path_source(
+            "/acme/Res.pkl",
+            "a = read(\"data.txt\").text\nb = read(\"/acme/data.txt\").text\nc = read?(\"none.txt\") == null\n",
+        );
+    let json = eval_with(
+        builder,
+        "import \"modulepath:/acme/Res.pkl\" as R\nr = List(R.a, R.b, R.c, read(\"modulepath:/acme/./x/../data.txt\").text)\n",
+    )
+    .unwrap();
+    assert_eq!(
+        json["r"],
+        serde_json::json!(["hello\n", "hello\n", true, "hello\n"])
+    );
+}
+
+#[test]
+fn module_path_is_not_globbable() {
+    let builder = || {
+        EvaluatorBuilder::new()
+            .module_path_source("/acme/A.pkl", "x = 1\n")
+            .module_path_source(
+                "/acme/Glob.pkl",
+                "import* \"*.pkl\" as all\nkeys = all.keys.toList()\n",
+            )
+    };
+    for source in [
+        "import \"modulepath:/acme/Glob.pkl\" as G\nr = G.keys\n",
+        "import* \"modulepath:/acme/*.pkl\" as all\nr = all.keys.toList()\n",
+        "r = read*(\"modulepath:/acme/*.pkl\").keys.toList()\n",
+    ] {
+        let error = eval_with(builder(), source).unwrap_err();
+        assert!(
+            error.contains("Cannot expand glob pattern `modulepath:/acme/*.pkl` because scheme `modulepath` is not globbable."),
+            "{error}"
+        );
+    }
 }
 
 struct LocalOnly;
