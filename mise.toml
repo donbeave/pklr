@@ -1,10 +1,19 @@
 [tools]
 communique = { version = "latest", minimum_release_age = "0s" }
-cargo-binstall = "latest"
+cargo-binstall = "1.26.2"
 cargo-msrv = "latest"
 # hk.pkl amends a pinned hk package; the tool itself floats and is resolved by mise.lock.
-hk = { version = "latest", minimum_release_age = "0s" }
+hk = { version = "2.12.0", minimum_release_age = "0s" }
 jactionlint = "latest"
+mr-boxington = { version = "1.30.0", minimum_release_age = "0s" }
+rust = { version = "1.99.1", profile = "minimal", components = [
+  "clippy",
+  "rustfmt",
+], targets = [
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+], mr_boxington = true }
 pkl = "0.32.2"
 # Measures tak.toml's benchmarks. Bump deliberately, in a commit that changes
 # nothing else: a new tak can move the series without pklr changing.
@@ -25,3 +34,12 @@ run = [
   "cargo build --release --example eval_json",
   "tak run --record",
 ]
+
+[settings]
+cargo.binstall = true
+idiomatic_version_file_enable_tools = ["rust"]
+lockfile = true
+
+[wrappers.cargo]
+command = "mbx"
+env = { MBX_CARGO_SHIM_MODE = "1" }
