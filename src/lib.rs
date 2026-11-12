@@ -198,17 +198,12 @@ impl EvaluatorBuilder {
         self
     }
 
-    /// Append a directory to the module path that serves `modulepath:`
-    /// imports, like `pkl --module-path`. Entries are searched in order.
-    pub fn module_path_directory(mut self, directory: impl Into<std::path::PathBuf>) -> Self {
-        self.module_path
-            .push(eval::ModulePathEntry::Directory(directory.into()));
-        self
-    }
-
     /// Append a module compiled into the host to the module path, at the
     /// absolute namespace path `path` (imported as `modulepath:{path}`).
     /// Entries are searched in order.
+    ///
+    /// Serving `modulepath:` imports from module path directories is
+    /// upstream since jdx/pklr@d0b0a05 (#415, `EvaluatorBuilder::module_path`).
     ///
     /// # Panics
     /// Panics if `path` is relative, empty or climbs above the root.

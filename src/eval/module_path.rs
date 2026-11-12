@@ -2,11 +2,15 @@
 //!
 //! This follows `pkl --module-path`: a `modulepath:/a/B.pkl` URI names a
 //! module or resource by an absolute path inside one namespace, and the
-//! module path's entries are searched in order. An entry is a directory or a
-//! source compiled into the host (the counterpart of a library on the JVM
-//! class path). Relative and triple-dot URIs inside a `modulepath:` module
-//! stay inside the namespace, as with the JVM evaluator. Globs are refused:
-//! Pkl does not consider the scheme globbable.
+//! module path's entries are searched in order. An entry is a module or
+//! resource compiled into the host (the counterpart of a library on the
+//! JVM class path). Serving `modulepath:` imports from module path
+//! *directories* is upstream since jdx/pklr@d0b0a05 (`#415`,
+//! `EvaluatorBuilder::module_path`), so this fork no longer carries its
+//! own directory entries. Relative and triple-dot URIs inside a
+//! `modulepath:` module stay inside the namespace, as with the JVM
+//! evaluator. Globs are refused: Pkl does not consider the scheme
+//! globbable.
 //!
 //! The namespace is independent from [`crate::ModuleSource`], which governs
 //! local file modules only.
@@ -17,7 +21,6 @@ pub(crate) const SCHEME: &str = "modulepath:";
 
 #[derive(Clone)]
 pub(crate) enum ModulePathEntry {
-    Directory(PathBuf),
     Source { path: String, source: Arc<str> },
 }
 
@@ -79,12 +82,6 @@ impl Evaluator {
         self.module_path = entries;
     }
 
-    /// Append a directory to the module path, like `pkl --module-path`.
-    pub fn add_module_path_directory(&mut self, directory: impl Into<PathBuf>) {
-        self.module_path
-            .push(ModulePathEntry::Directory(directory.into()));
-    }
-
     /// Append a module or resource compiled into the host to the module path
     /// at the absolute namespace path `path`, for example `/acme/Schema.pkl`,
     /// which Pkl code imports as `modulepath:/acme/Schema.pkl`.
@@ -138,7 +135,7 @@ impl Evaluator {
 
     /// The first module path entry that has the module or resource at
     /// namespace path `path`.
-    fn find_module_path_entry(&mut self, path: &str) -> Result<Option<ModulePathHit>> {
+    fn find_module_path_entry(&mut self, path: &str) -> Result<Option<Arc<str>>> {
         let path = normalize(path)?;
         if path == "/" || path.starts_with("/..") {
             return Ok(None);
@@ -150,13 +147,7 @@ impl Evaluator {
                     source,
                 } => {
                     if *entry == path {
-                        return Ok(Some(ModulePathHit::Source(Arc::clone(source))));
-                    }
-                }
-                ModulePathEntry::Directory(directory) => {
-                    let file = directory.join(&path[1..]);
-                    if self.capabilities.path_exists(&file)? {
-                        return Ok(Some(ModulePathHit::File(file)));
+                        return Ok(Some(Arc::clone(source)));
                     }
                 }
             }
@@ -170,8 +161,7 @@ impl Evaluator {
 
     pub(super) fn module_path_read(&mut self, path: &str) -> Result<String> {
         match self.find_module_path_entry(path)? {
-            Some(ModulePathHit::Source(source)) => Ok(source.to_string()),
-            Some(ModulePathHit::File(file)) => self.capabilities.read_to_string(&file),
+            Some(source) => Ok(source.to_string()),
             None => Err(Error::ImportNotFound(format!("{SCHEME}{path}"))),
         }
     }
@@ -179,16 +169,10 @@ impl Evaluator {
     /// The bytes of the resource at namespace path `path`, or `None`.
     pub(super) fn module_path_read_bytes(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
         match self.find_module_path_entry(path)? {
-            Some(ModulePathHit::Source(source)) => Ok(Some(source.as_bytes().to_vec())),
-            Some(ModulePathHit::File(file)) => self.capabilities.read_bytes(&file).map(Some),
+            Some(source) => Ok(Some(source.as_bytes().to_vec())),
             None => Ok(None),
         }
     }
-}
-
-enum ModulePathHit {
-    Source(Arc<str>),
-    File(PathBuf),
 }
 
 #[cfg(test)]

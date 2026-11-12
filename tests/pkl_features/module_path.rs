@@ -1,4 +1,3 @@
-use super::*;
 use pklr::{EvaluatorBuilder, ModuleSource};
 use std::path::{Path, PathBuf};
 
@@ -47,53 +46,6 @@ fn module_path_supports_amends_and_typed_classes() {
     )
     .unwrap_err();
     assert!(error.contains("property 'size' expected Int"), "{error}");
-}
-
-#[test]
-fn module_path_directories_are_searched_in_order() {
-    let first = TestTempDir::new("pklr_module_path_first");
-    let second = TestTempDir::new("pklr_module_path_second");
-    std::fs::create_dir_all(first.path().join("lib")).unwrap();
-    std::fs::create_dir_all(second.path().join("lib")).unwrap();
-    std::fs::write(first.path().join("lib/A.pkl"), "name = \"first\"\n").unwrap();
-    std::fs::write(second.path().join("lib/A.pkl"), "name = \"second\"\n").unwrap();
-    std::fs::write(
-        second.path().join("lib/B.pkl"),
-        "import \"A.pkl\"\nname = A.name\n",
-    )
-    .unwrap();
-    let builder = EvaluatorBuilder::new()
-        .module_path_directory(first.path())
-        .module_path_directory(second.path());
-    let json = eval_with(
-        builder,
-        "import \"modulepath:/lib/A.pkl\" as A\nimport \"modulepath:/lib/B.pkl\" as B\na = A.name\nb = B.name\n",
-    )
-    .unwrap();
-    // B lives only in the second directory; its relative import of A still
-    // resolves through the whole module path, where the first entry wins.
-    assert_eq!(json["a"], "first");
-    assert_eq!(json["b"], "first");
-}
-
-#[test]
-fn earlier_module_path_sources_shadow_later_directories() {
-    let dir = TestTempDir::new("pklr_module_path_shadow");
-    std::fs::create_dir_all(dir.path().join("acme")).unwrap();
-    std::fs::write(
-        dir.path().join("acme/Schema.pkl"),
-        "origin = \"directory\"\n",
-    )
-    .unwrap();
-    let builder = EvaluatorBuilder::new()
-        .module_path_source("/acme/Schema.pkl", "origin = \"embedded\"\n")
-        .module_path_directory(dir.path());
-    let json = eval_with(
-        builder,
-        "import \"modulepath:/acme/Schema.pkl\" as S\no = S.origin\n",
-    )
-    .unwrap();
-    assert_eq!(json["o"], "embedded");
 }
 
 #[test]
