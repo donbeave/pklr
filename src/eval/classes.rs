@@ -731,9 +731,6 @@ pub(super) fn check_instantiable(
         None | Some(Value::String(_)) if ABSTRACT_STDLIB_CLASSES.contains(&resolved) => Err(
             Error::Eval(format!("Cannot instantiate abstract class `{resolved}`.")),
         ),
-        None => Err(Error::Eval(format!(
-            "Cannot instantiate unresolved type `{type_name}`."
-        ))),
         _ => Ok(()),
     }
 }
